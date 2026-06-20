@@ -3,9 +3,69 @@ const { invoke } = window.__TAURI__.core;
 import { log } from './logger.js';
 
 // Массив полиморфных шагов скрипта: может содержать move, delay, scpi, pulse
-export let pointsQueue = []; 
+export let pointsQueue = [];
 export let queueActive = false;
+export let queuePaused = false;
 export let currentStepIndex = -1;
+
+// --- Активные оси (какие сервоприводы физически подключены) ---
+// Источник истины — window.activeAxes (задаётся из настроек в app.js).
+function getActiveAxes() {
+  return Array.isArray(window.activeAxes) && window.activeAxes.length ? window.activeAxes : [1, 2, 3];
+}
+
+// --- Сохранение прогресса сценария на диск (crash-resume) ---
+// Снимок пишется при старте и на каждой границе шага; чистится при штатном
+// завершении/останове. Так файл переживает только реальное внезапное падение.
+async function persistSession() {
+  if (!queueActive) return;
+  try {
+    await invoke('save_scan_session', {
+      content: JSON.stringify({ running: true, index: currentStepIndex, steps: pointsQueue })
+    });
+  } catch (e) { /* запись прогресса — удобство, не критично */ }
+}
+
+async function clearSession() {
+  try { await invoke('clear_scan_session'); } catch (e) {}
+}
+
+// Восстановление прерванного сценария при запуске программы. Загружает шаги в
+// очередь и помечает к возобновлению — фактический запуск произойдёт после
+// установки связи (см. обработчик connection-status в app.js).
+export async function restoreSession() {
+  try {
+    const str = await invoke('load_scan_session');
+    if (!str) return;
+    const data = JSON.parse(str);
+    if (!data || !data.running || !Array.isArray(data.steps) || data.steps.length === 0) return;
+
+    pointsQueue = data.steps.map(p => ({ ...p, checked: false }));
+    window.pointsQueue = pointsQueue;
+    const idx = Math.max(0, Math.min(parseInt(data.index) || 0, pointsQueue.length - 1));
+    updateQueueUi();
+
+    window.__resumeIndex = idx;
+    window.__pendingResume = true;
+    log(`⚠ Обнаружен прерванный сценарий (${pointsQueue.length} шагов). Продолжение с шага №${idx + 1} после установки связи.`);
+  } catch (e) { /* нет валидной сессии — нечего восстанавливать */ }
+}
+
+// Возобновление прерванного сканирования (вызывается из app.js по событию
+// connection-status='connected', если есть отложенное восстановление).
+window.__tryResumeSession = function () {
+  if (!window.__pendingResume) return;
+  window.__pendingResume = false;
+  const idx = window.__resumeIndex || 0;
+  log(`▶ Возобновление прерванного сканирования с шага №${idx + 1}`);
+  const axes = getActiveAxes();
+  try { invoke('enable_all_motors', { axes }); } catch (e) {}
+  currentStepIndex = idx;
+  queueActive = true;
+  queuePaused = false;
+  updatePauseBtn();
+  executeCurrentStep();
+};
 
 // Внутренний изолированный буфер для отслеживания виртуального индекса перетаскивания
 let draggedIdx = null;
@@ -215,18 +275,23 @@ export function updateQueueUi() {
 
     container.appendChild(row);
   });
+
+  // Автоскролл: подтягиваем активный шаг в зону видимости контейнера очереди.
+  if (queueActive && currentStepIndex >= 0 && currentStepIndex < container.children.length) {
+    const activeRow = container.children[currentStepIndex];
+    if (activeRow) activeRow.scrollIntoView({ block: 'nearest' });
+  }
 }
 
-// ОСТАЛЬНАЯ ЛОГИКА ДИСПЕТЧЕРА СЦЕНАРИЕВ (БЕЗ ИЗМЕНЕНИЙ)
-export function startQueue() { 
+// ОСТАЛЬНАЯ ЛОГИКА ДИСПЕТЧЕРА СЦЕНАРИЕВ
+export function startQueue() {
   if(pointsQueue.length === 0) { log("Ошибка: Сценарий пуст!"); return; }
-  
-  log("Авто-подготовка: Включение силовых контуров всех приводов (Servo ON)...");
+
+  const axes = getActiveAxes();
+  log(`Авто-подготовка: включение силовых контуров активных осей [${axes.join(', ')}] (Servo ON)...`);
   try {
-    invoke('send_power', { axis: 1, status: true });
-    invoke('send_power', { axis: 2, status: true });
-    invoke('send_power', { axis: 3, status: true });
-    log("Силовые контуры осей X, Y, Z успешно заблокированы.");
+    invoke('enable_all_motors', { axes });
+    log("Силовые контуры активных осей заблокированы.");
   } catch(e) {
     log("Внимание, ошибка авто-включения приводов: " + e);
   }
@@ -239,30 +304,84 @@ export function startQueue() {
     currentStepIndex = 0;
     log("Точка старта не выбрана. Выполнение начнется с Шага №1");
   }
-  queueActive = true; 
+  queueActive = true;
+  queuePaused = false;
+  updatePauseBtn();
+  persistSession();
   executeCurrentStep();
 }
 
-export function stopQueue() { 
-  queueActive = false; 
-  currentStepIndex = -1; 
+export function stopQueue() {
+  queueActive = false;
+  queuePaused = false;
+  currentStepIndex = -1;
+  updatePauseBtn();
   updateQueueUi();
+  clearSession();
   log("Автоматическое выполнение скрипта прервано оператором.");
+}
+
+// --- Пауза / возобновление сценария ---
+// Пауза вступает в силу на ближайшей границе шага: текущее движение
+// доводится до конца, после чего выполнение паркуется до возобновления.
+export function pauseQueue() {
+  if (queueActive && !queuePaused) {
+    queuePaused = true;
+    updatePauseBtn();
+    log("⏸ Сканирование на паузе (вступит в силу на границе текущего шага).");
+  }
+}
+
+export function resumeQueue() {
+  if (queueActive && queuePaused) {
+    queuePaused = false;
+    updatePauseBtn();
+    log("▶ Возобновление сканирования.");
+    executeCurrentStep();
+  }
+}
+
+export function togglePause() {
+  if (!queueActive) { log("Сценарий не запущен — пауза недоступна."); return; }
+  if (queuePaused) resumeQueue(); else pauseQueue();
+}
+
+function updatePauseBtn() {
+  const b = document.getElementById('btnPauseQueue');
+  if (!b) return;
+  if (queueActive && queuePaused) { b.innerText = "ПРОДОЛЖИТЬ"; b.className = "btn-success"; }
+  else { b.innerText = "ПАУЗА"; b.className = "btn-warn"; }
 }
 
 export async function executeCurrentStep() {
   if (!queueActive) return;
-  
+
   if (currentStepIndex >= pointsQueue.length) {
     queueActive = false;
+    queuePaused = false;
     currentStepIndex = -1;
+    updatePauseBtn();
     updateQueueUi();
+    clearSession();
     log("🎉 Сценарий сканирования выполнен в полном объеме!");
     return;
   }
 
   updateQueueUi();
+  persistSession();
   const step = pointsQueue[currentStepIndex];
+
+  // Пропуск движений по неподключённым осям: иначе сценарий навсегда зависнет
+  // в ожидании доезда, которого не будет (см. active_axes).
+  if (step.type === 'move' || step.type === 'move_pulse') {
+    const axes = getActiveAxes();
+    if (!axes.includes(step.axis)) {
+      const aName = step.axis === 1 ? 'X' : (step.axis === 2 ? 'Y' : 'Z');
+      log(`Шаг №${currentStepIndex + 1}: ось ${aName} не подключена (active_axes) — пропуск.`);
+      advanceStep();
+      return;
+    }
+  }
 
   switch(step.type) {
     case 'move':
@@ -330,6 +449,13 @@ export async function handleStepArrival() {
 export function advanceStep() {
   if (!queueActive) return;
   currentStepIndex++;
+  // Если запрошена пауза — паркуемся на этой границе шага до возобновления.
+  if (queuePaused) {
+    updateQueueUi();
+    persistSession();
+    log("⏸ Пауза: ожидание возобновления оператором...");
+    return;
+  }
   executeCurrentStep();
 }
 
@@ -372,3 +498,4 @@ window.toggleStepInputs = toggleStepInputs; window.addPolymorphicStep = addPolym
 window.importJsonSequence = importJsonSequence; window.exportJsonSequence = exportJsonSequence;
 window.deletePointInline = deletePointInline; window.clearSelectedPoints = clearSelectedPoints;
 window.startQueue = startQueue; window.stopQueue = stopQueue;
+window.pauseQueue = pauseQueue; window.resumeQueue = resumeQueue; window.togglePause = togglePause;

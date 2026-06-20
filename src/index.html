@@ -9,8 +9,10 @@
 
 <div id="app">
   <div class="main-content">
-    <div class="status-bar">
+    <div class="status-bar" style="display:flex; gap:8px; align-items:center;">
       <button id="btnConnect" class="btn-danger" style="padding: 6px 14px;" onclick="toggleConnect()">Связь: Отсутствует</button>
+      <button id="btnEnableAll" class="btn-success" style="padding: 6px 14px;" onclick="enableAllMotors()">Включить все двигатели</button>
+      <button id="btnEstop" class="btn-danger" style="padding: 6px 14px; background:#b00000; font-weight:bold;" onclick="emergencyStopAll()">⛔ АВАРИЙНЫЙ СТОП</button>
     </div>
 
     <div class="tabs">
@@ -111,6 +113,7 @@
             <div id="queueContainer" class="queue-container" style="flex: 1;"></div>
             <div class="trajectory-action-btns" style="display:flex; flex-direction:column; gap:6px;">
               <button class="btn-success" style="width:85px;" onclick="startQueue()">ЗАПУСК</button>
+              <button id="btnPauseQueue" class="btn-warn" style="width:85px;" onclick="togglePause()">ПАУЗА</button>
               <button class="btn-danger" style="width:85px;" onclick="stopQueue()">СТОП</button>
             </div>
           </div>
@@ -250,6 +253,17 @@
           <div class="form-group"><label>IP Адрес:</label><input id="cfg_plc_ip" type="text" value="192.168.1.88"></div>
           <div class="form-group"><label>Порт Modbus:</label><input id="cfg_plc_port" type="number" value="502"></div>
           <div class="form-group"><label>Период опроса (мс):</label><input id="cfg_poll_ms" type="number" value="150"></div>
+          <div class="form-group" style="justify-content:flex-start; gap:6px;">
+            <label style="display:flex; align-items:center; gap:6px;"><input id="cfg_auto_connect" type="checkbox"> Автоподключение при запуске</label>
+          </div>
+          <div class="form-group" style="justify-content:flex-start; gap:12px;">
+            <label style="font-weight:600;">Подключённые оси:</label>
+            <label style="display:flex; align-items:center; gap:4px;"><input id="cfg_axis_x" type="checkbox" checked> X</label>
+            <label style="display:flex; align-items:center; gap:4px;"><input id="cfg_axis_y" type="checkbox" checked> Y</label>
+            <label style="display:flex; align-items:center; gap:4px;"><input id="cfg_axis_z" type="checkbox" checked> Z</label>
+          </div>
+          <p style="font-size:11px; color:#888; margin:4px 0 8px;">Движения сценария по неподключённым осям пропускаются (защита от зависания).</p>
+          <button class="btn-primary" style="width:100%;" onclick="saveAppConfig()">💾 Сохранить настройки</button>
         </div>
         <div class="card">
           <h3>Параметры Анализатора (SCPI)</h3>

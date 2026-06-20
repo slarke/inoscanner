@@ -111,6 +111,26 @@ export async function setOutputToggle(state) {
   } catch(e) { log("Ошибка управления Y1: " + e); }
 }
 
+// Включение силовых контуров сразу всех подключённых осей (active_axes).
+export async function enableAllMotors() {
+  const axes = (Array.isArray(window.activeAxes) && window.activeAxes.length) ? window.activeAxes : [1, 2, 3];
+  log(`Кнопка: включение приводов осей [${axes.join(', ')}] (Servo ON)`);
+  try {
+    await invoke('enable_all_motors', { axes });
+    log("Все указанные приводы включены.");
+  } catch(e) { log("Ошибка включения приводов: " + e); }
+}
+
+// Аварийный стоп всех осей: торможение MC_Stop + снятие питания, и останов сценария.
+export async function emergencyStopAll() {
+  log("⛔ АВАРИЙНЫЙ СТОП всех осей!");
+  try {
+    await invoke('emergency_stop_all', { decel: 5000.0 });
+    log("Команда экстренного торможения и снятия питания отправлена на все оси.");
+  } catch(e) { log("Ошибка аварийного стопа: " + e); }
+  if (typeof window.stopQueue === 'function') window.stopQueue();
+}
+
 export async function setFreqConfig(enabled) {
   let freqVal = parseFloat(document.getElementById('dbg_out_freq').value);
   if (isNaN(freqVal)) { log("Ошибка: Задайте валидное значение частоты!"); return; }
@@ -124,5 +144,6 @@ export async function setFreqConfig(enabled) {
 window.sendPower = sendPower; window.sendReset = sendReset; window.moveAbsMain = moveAbsMain;
 window.moveAbsDbg = moveAbsDbg; window.setPosDbg = setPosDbg; window.resetPosDbg = resetPosDbg;
 window.moveVelDbg = moveVelDbg; window.stopVelDbg = stopVelDbg; window.readAxisErrorDebug = readAxisErrorDebug;
-window.triggerPulseDebug = triggerPulseDebug; window.setOutputToggle = setOutputToggle; 
+window.triggerPulseDebug = triggerPulseDebug; window.setOutputToggle = setOutputToggle;
 window.setFreqConfig = setFreqConfig; window.setY0Toggle = setY0Toggle;
+window.enableAllMotors = enableAllMotors; window.emergencyStopAll = emergencyStopAll;
