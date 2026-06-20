@@ -1,0 +1,26 @@
+{
+  "productName": "innovance_xy_panel",
+  "version": "0.1.0",
+  "identifier": "com.innovance.xypanel",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true, 
+    "windows": [
+      {
+        "title": "Innovance XY Industrial Panel",
+        "width": 1350,
+        "height": 920,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all"
+  }
+}

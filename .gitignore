@@ -1,0 +1,37 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller build output
+build/
+dist/
+*.manifest
+
+# ---- Rust / Tauri ----
+src_tauri/target/
+src/target/
+
+# ---- Runtime / generated data (must not be versioned) ----
+# Durable command queue (SQLite WAL)
+*.db
+*.db-wal
+*.db-shm
+# On-disk logs
+log/
+python_panel/plc_panel_log.txt
+*.log
+# Crash-resume session state
+scan_session.json
+
+# ---- Editor / OS noise ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- Local archives ----
+core.zip
