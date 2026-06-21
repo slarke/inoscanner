@@ -73,6 +73,9 @@ class MainWindow(QMainWindow):
         self._main_targets: Dict[int, tuple] = {}
         self._input_leds: List[QLabel] = []
         self._output_leds: List[QLabel] = []
+        # Индикаторы состояния двигателей (MC_Power) по осям на рабочей вкладке.
+        self._power_leds: Dict[int, QLabel] = {}
+        self._power_labels: Dict[int, QLabel] = {}
 
         self._build_ui()
         self._connect_signals()
@@ -158,6 +161,18 @@ class MainWindow(QMainWindow):
             on_off.addWidget(button(f"{regs.name} OFF", "danger",
                                     lambda _=False, a=axis: self._service.set_power(a, False)))
             card_layout.addLayout(on_off)
+
+            # Индикатор состояния двигателя (читается с коила MC_Power).
+            state_row = QHBoxLayout()
+            state_dot = led()
+            state_label = QLabel("Двигатель: Нет связи")
+            state_label.setStyleSheet("font-weight: bold; color: #999;")
+            self._power_leds[axis] = state_dot
+            self._power_labels[axis] = state_label
+            state_row.addWidget(state_dot)
+            state_row.addWidget(state_label)
+            state_row.addStretch(1)
+            card_layout.addLayout(state_row)
 
             pos = double_spin(pos_default, width=80)
             spd = double_spin(spd_default, width=70)
@@ -505,12 +520,14 @@ class MainWindow(QMainWindow):
         # auto-reconnect path (_on_reconnecting), so don't reset the UI here.
         if self._service.is_active:
             return
+        self._set_all_power_no_link()
         self._connect_btn.setText("Связь: Отсутствует")
         self._connect_btn.setProperty("kind", "danger")
         self._restyle(self._connect_btn)
         self.log("Сессия закрыта.")
 
     def _on_reconnecting(self, message: str) -> None:
+        self._set_all_power_no_link()
         self._connect_btn.setText("Связь: Переподключение…")
         self._connect_btn.setProperty("kind", "warn")
         self._restyle(self._connect_btn)
@@ -537,6 +554,32 @@ class MainWindow(QMainWindow):
         widget.style().polish(widget)
 
     # ------------------------------------------------------------------ #
+    # Motor power indicators                                             #
+    # ------------------------------------------------------------------ #
+    #: kind -> (цвет LED, светится ли, текст, цвет текста)
+    _POWER_STYLES = {
+        "on":     ("#107c41", True,  "Двигатель: Включён", "#107c41"),
+        "off":    ("#d83b01", False, "Двигатель: Выключен", "#d83b01"),
+        "nolink": ("#999999", False, "Двигатель: Нет связи", "#999"),
+        "nodata": ("#999999", False, "Двигатель: —", "#999"),
+    }
+
+    def _set_power_indicator(self, axis: int, kind: str) -> None:
+        dot = self._power_leds.get(axis)
+        label = self._power_labels.get(axis)
+        if dot is None or label is None:
+            return
+        color, glow, text, text_color = self._POWER_STYLES[kind]
+        set_led(dot, glow, color)
+        label.setText(text)
+        label.setStyleSheet(f"font-weight: bold; color: {text_color};")
+
+    def _set_all_power_no_link(self) -> None:
+        """Сбросить все индикаторы двигателей в «Нет связи» (обрыв/нет сессии)."""
+        for axis in self._power_leds:
+            self._set_power_indicator(axis, "nolink")
+
+    # ------------------------------------------------------------------ #
     # Telemetry                                                          #
     # ------------------------------------------------------------------ #
     def _on_telemetry(self, telemetry) -> None:
@@ -553,6 +596,16 @@ class MainWindow(QMainWindow):
             data = telemetry.axes.get(axis)
             if data is not None:
                 panel.update_telemetry(data)
+
+        # Состояние двигателей (MC_Power) по факту обратного чтения коила.
+        for axis in self._power_leds:
+            state = telemetry.power.get(axis)
+            if state is True:
+                self._set_power_indicator(axis, "on")
+            elif state is False:
+                self._set_power_indicator(axis, "off")
+            else:  # коил не прочитан, хотя связь есть
+                self._set_power_indicator(axis, "nodata")
 
         for i, dot in enumerate(self._input_leds):
             if i < len(telemetry.inputs):

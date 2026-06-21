@@ -168,9 +168,15 @@ class ScenarioQueueWidget(QWidget):
     # Row mutation                                                       #
     # ------------------------------------------------------------------ #
     def _delete(self, step: ScanStep) -> None:
-        if step in self._steps:
-            self._steps.remove(step)
-            self._rebuild()
+        # Удаляем строго тот объект, чья кнопка нажата (по identity, а не по ==).
+        # ScanStep — dataclass со значимым __eq__: при одинаковых полях (частый
+        # случай после импорта JSON) list.remove() убрал бы первый равный шаг,
+        # а не выбранный. Поэтому ищем по `is`.
+        for i, existing in enumerate(self._steps):
+            if existing is step:
+                del self._steps[i]
+                self._rebuild()
+                return
 
     # ------------------------------------------------------------------ #
     # Rendering                                                          #

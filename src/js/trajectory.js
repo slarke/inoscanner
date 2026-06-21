@@ -8,6 +8,11 @@ export let queueActive = false;
 export let queuePaused = false;
 export let currentStepIndex = -1;
 
+// Пауза между авто-Servo ON и первым шагом, чтобы приводы успели запитаться
+// (как в Python-панели). Без неё первая команда MOVE уходит раньше готовности
+// серво и ПЛК её игнорирует — приходилось жать «Запуск» дважды.
+const SERVO_ENABLE_DELAY_MS = 500;
+
 // --- Активные оси (какие сервоприводы физически подключены) ---
 // Источник истины — window.activeAxes (задаётся из настроек в app.js).
 function getActiveAxes() {
@@ -59,12 +64,15 @@ window.__tryResumeSession = function () {
   const idx = window.__resumeIndex || 0;
   log(`▶ Возобновление прерванного сканирования с шага №${idx + 1}`);
   const axes = getActiveAxes();
-  try { invoke('enable_all_motors', { axes }); } catch (e) {}
   currentStepIndex = idx;
   queueActive = true;
   queuePaused = false;
   updatePauseBtn();
-  executeCurrentStep();
+  (async () => {
+    try { await invoke('enable_all_motors', { axes }); } catch (e) {}
+    // Та же задержка готовности приводов, что и при обычном старте.
+    setTimeout(() => { if (queueActive) executeCurrentStep(); }, SERVO_ENABLE_DELAY_MS);
+  })();
 };
 
 // Внутренний изолированный буфер для отслеживания виртуального индекса перетаскивания
@@ -284,13 +292,14 @@ export function updateQueueUi() {
 }
 
 // ОСТАЛЬНАЯ ЛОГИКА ДИСПЕТЧЕРА СЦЕНАРИЕВ
-export function startQueue() {
+export async function startQueue() {
   if(pointsQueue.length === 0) { log("Ошибка: Сценарий пуст!"); return; }
 
   const axes = getActiveAxes();
   log(`Авто-подготовка: включение силовых контуров активных осей [${axes.join(', ')}] (Servo ON)...`);
   try {
-    invoke('enable_all_motors', { axes });
+    // Дожидаемся фактического включения приводов, прежде чем запускать шаги.
+    await invoke('enable_all_motors', { axes });
     log("Силовые контуры активных осей заблокированы.");
   } catch(e) {
     log("Внимание, ошибка авто-включения приводов: " + e);
@@ -308,7 +317,10 @@ export function startQueue() {
   queuePaused = false;
   updatePauseBtn();
   persistSession();
-  executeCurrentStep();
+
+  // Откладываем первый шаг, чтобы приводы успели выйти в готовность (одно нажатие).
+  log(`Старт через ${SERVO_ENABLE_DELAY_MS} мс после Servo ON...`);
+  setTimeout(() => { if (queueActive) executeCurrentStep(); }, SERVO_ENABLE_DELAY_MS);
 }
 
 export function stopQueue() {

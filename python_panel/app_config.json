@@ -1,12 +1,14 @@
 {
-  "plc_ip": "192.168.1.88",
+  "plc_ip": "192.168.4.88",
   "plc_port": 502,
   "poll_interval_ms": 200,
   "scpi_ip": "192.168.1.99",
   "scpi_port": 5025,
   "auto_connect": true,
   "active_axes": [
-    1
+    1,
+    2,
+    3
   ],
   "arrival_tolerance_mm": 0.4,
   "move_timeout_ms": 30000,

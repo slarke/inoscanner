@@ -31,6 +31,9 @@ class Telemetry:
     block_error: int = 0
     inputs: List[bool] = field(default_factory=lambda: [False] * 4)
     outputs: List[bool] = field(default_factory=lambda: [False] * 4)
+    #: Состояние силового контура (MC_Power) по осям: True=включён, False=выключен,
+    #: None=неизвестно (коил не прочитан). Считывается с коилов M10/M20/M30.
+    power: Dict[int, Optional[bool]] = field(default_factory=dict)
 
 
 class StepType(str, Enum):

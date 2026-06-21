@@ -337,6 +337,13 @@ class PlcWorker(QObject):
                     servo_error=errors[0],
                     axis_error=errors[2],
                 )
+                # Состояние силового контура — обратное чтение коила MC_Power.
+                # Толерантно: если ПЛК не отдаёт этот коил, оставляем «неизвестно»,
+                # не роняя остальную телеметрию.
+                try:
+                    snapshot.power[number] = self._read_bits(regs.power, 1)[0]
+                except Exception:  # noqa: BLE001
+                    snapshot.power[number] = None
             snapshot.outputs = self._read_bits(IO.OUTPUT_BASE, IO.DISCRETE_COUNT)
             snapshot.inputs = self._read_bits(IO.INPUT_X0, IO.DISCRETE_COUNT)
             self.telemetry.emit(snapshot)

@@ -1,0 +1,40 @@
+[
+  {
+    "type": "move",
+    "axis": 1,
+    "pos": 0.0,
+    "spd": 10.0
+  },
+  {
+    "type": "move",
+    "axis": 2,
+    "pos": 0.0,
+    "spd": 10.0
+  },
+  {
+    "type": "pulse"
+  },
+  {
+    "type": "delay",
+    "ms": 1000
+  },
+  {
+    "type": "move",
+    "axis": 1,
+    "pos": 100.0,
+    "spd": 10.0
+  },
+  {
+    "type": "move",
+    "axis": 2,
+    "pos": 100.0,
+    "spd": 10.0
+  },
+  {
+    "type": "delay",
+    "ms": 1000
+  },
+  {
+    "type": "pulse"
+  }
+]
