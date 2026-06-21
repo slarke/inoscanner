@@ -279,6 +279,18 @@ class PlcWorker(QObject):
         except Exception as exc:  # noqa: BLE001
             self._fail("Управление Y0", exc)
 
+    @pyqtSlot()
+    def reset_block(self) -> None:
+        """Снять аппаратную блокировку: импульс M101 (`M101 → RST M100`)."""
+        self.log.emit("Кнопка: снятие блокировки (импульс M101 → сброс M100)")
+        if not self._require_client("Снятие блокировки"):
+            return
+        try:
+            self._pulse_coil(IO.BLOCK_RESET, 100)
+            self.log.emit("Команда снятия блокировки отработана (M101)")
+        except Exception as exc:  # noqa: BLE001
+            self._fail("Снятие блокировки", exc)
+
     @pyqtSlot(bool)
     def set_output(self, on: bool) -> None:
         self.log.emit(f"Кнопка: выход Y1 → {'HIGH' if on else 'LOW'}")
@@ -346,6 +358,20 @@ class PlcWorker(QObject):
                     snapshot.power[number] = None
             snapshot.outputs = self._read_bits(IO.OUTPUT_BASE, IO.DISCRETE_COUNT)
             snapshot.inputs = self._read_bits(IO.INPUT_X0, IO.DISCRETE_COUNT)
+            # Концевые выключатели X0..X2 (физические входы) и признак
+            # блокировки M100 — толерантно, чтобы недоступная проекция входов
+            # не валила весь опрос телеметрии.
+            try:
+                bits = self._read_discrete(IO.LIMIT_INPUT_BASE, IO.LIMIT_INPUT_COUNT)
+                for i in range(IO.LIMIT_INPUT_COUNT):
+                    snapshot.limit_inputs[i] = bits[i]
+            except Exception:  # noqa: BLE001
+                for i in range(IO.LIMIT_INPUT_COUNT):
+                    snapshot.limit_inputs[i] = None
+            try:
+                snapshot.blocked = self._read_bits(IO.BLOCK_LATCH, 1)[0]
+            except Exception:  # noqa: BLE001
+                snapshot.blocked = None
             self.telemetry.emit(snapshot)
             self._poll_failures = 0
         except Exception as exc:  # noqa: BLE001 - distinguish glitch vs lost link
@@ -370,6 +396,12 @@ class PlcWorker(QObject):
         response = self._client.read_coils(address, count=count)
         if response.isError():
             raise IOError(f"чтение coils {address} отклонено: {response}")
+        return [bool(b) for b in response.bits[:count]]
+
+    def _read_discrete(self, address: int, count: int) -> List[bool]:
+        response = self._client.read_discrete_inputs(address, count=count)
+        if response.isError():
+            raise IOError(f"чтение входов {address} отклонено: {response}")
         return [bool(b) for b in response.bits[:count]]
 
     def _write_coil(self, address: int, value: bool) -> None:

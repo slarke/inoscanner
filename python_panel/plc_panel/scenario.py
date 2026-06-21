@@ -386,6 +386,13 @@ class ScenarioRunner(QObject):
             again = self._queue.claim_next()
             if again is not None:
                 self._drive(again, decode_move(again))
+            else:
+                # Команда помечена на повтор (снова PENDING), но claim_next её не
+                # вернул — рассинхрон очереди. Без этого выхода автомат завис бы
+                # навсегда (нет ни inflight, ни таймера, ни шага вперёд), а
+                # «висящая» PENDING-команда испортила бы следующий запуск.
+                self._abort(
+                    f"повтор команды seq={q.seq} не удался — очередь пуста")
 
     # ------------------------------------------------------------------ #
     # Helpers                                                            #

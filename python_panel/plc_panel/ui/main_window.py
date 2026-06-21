@@ -41,6 +41,14 @@ _AXIS_COLORS = {1: COLOR_X, 2: COLOR_Y, 3: COLOR_Z}
 #: Deceleration used by the emergency-stop button (fast controlled stop).
 _EMERGENCY_DECEL = 5000.0
 
+#: Концевые выключатели (физические входы ПЛК): индекс -> (имя, подсказка).
+#: X0 в MAIN.LD защёлкивает блокировку M100; X1/X2 — прочие концевики/датчики.
+_LIMIT_INPUTS = {
+    0: ("X0", "Аварийный концевик — защёлкивает блокировку (M100)"),
+    1: ("X1", "Концевой выключатель / датчик X1"),
+    2: ("X2", "Концевой выключатель / датчик X2"),
+}
+
 
 def _format_value(value: float) -> str:
     if abs(value) >= 10000 or (0 < abs(value) < 0.01):
@@ -76,6 +84,11 @@ class MainWindow(QMainWindow):
         # Индикаторы состояния двигателей (MC_Power) по осям на рабочей вкладке.
         self._power_leds: Dict[int, QLabel] = {}
         self._power_labels: Dict[int, QLabel] = {}
+        # Концевые выключатели X0/X1/X2 и индикатор аппаратной блокировки (M100).
+        self._limit_leds: Dict[int, QLabel] = {}
+        self._limit_labels: Dict[int, QLabel] = {}
+        self._block_led: QLabel = None
+        self._block_label: QLabel = None
 
         self._build_ui()
         self._connect_signals()
@@ -298,13 +311,19 @@ class MainWindow(QMainWindow):
     # --- Tab 2: motor debug ------------------------------------------- #
     def _build_debug_tab(self) -> QWidget:
         tab = QWidget()
-        layout = QHBoxLayout(tab)
+        layout = QVBoxLayout(tab)
+
+        # Концевые выключатели и аппаратная блокировка — над колонками осей.
+        layout.addWidget(self._build_safety_card())
+
+        axes_row = QHBoxLayout()
         # Every column uses the first column's (X / blue) colour scheme.
         for axis, regs in AXES.items():
             panel = AxisDebugPanel(axis, regs, COLOR_X,
                                    self._service, self._settings.limits)
             self._axis_panels[axis] = panel
-            layout.addWidget(panel)
+            axes_row.addWidget(panel)
+        layout.addLayout(axes_row, stretch=1)
         return tab
 
     # --- Tab 3: settings ---------------------------------------------- #
@@ -380,27 +399,6 @@ class MainWindow(QMainWindow):
     def _build_io_tab(self) -> QWidget:
         tab = QWidget()
         layout = QHBoxLayout(tab)
-
-        in_frame, inputs = card("Мониторинг дискретных входов (Easy521)", accent=COLOR_X)
-        input_labels = [
-            ("X0", "Датчик исходного положения Home X"),
-            ("X1", "Датчик исходного положения Home Y"),
-            ("X2", "Сигнал готовности прибора (VNA Ready)"),
-            ("X3", "Кнопка аварийного отключения (E-Stop)"),
-        ]
-        for name, description in input_labels:
-            dot = led()
-            self._input_leds.append(dot)
-            row = QHBoxLayout()
-            row.addWidget(dot)
-            tag = QLabel(f"[{name}]")
-            tag.setStyleSheet("font-family: monospace; font-weight: bold;")
-            row.addWidget(tag)
-            row.addWidget(QLabel(description))
-            row.addStretch(1)
-            inputs.addLayout(row)
-        inputs.addStretch(1)
-        layout.addWidget(in_frame)
 
         out_frame, outputs = card("Управление дискретными выходами (Easy521)",
                                   accent="#d83b01")
@@ -521,6 +519,7 @@ class MainWindow(QMainWindow):
         if self._service.is_active:
             return
         self._set_all_power_no_link()
+        self._set_all_safety_no_link()
         self._connect_btn.setText("Связь: Отсутствует")
         self._connect_btn.setProperty("kind", "danger")
         self._restyle(self._connect_btn)
@@ -528,6 +527,7 @@ class MainWindow(QMainWindow):
 
     def _on_reconnecting(self, message: str) -> None:
         self._set_all_power_no_link()
+        self._set_all_safety_no_link()
         self._connect_btn.setText("Связь: Переподключение…")
         self._connect_btn.setProperty("kind", "warn")
         self._restyle(self._connect_btn)
@@ -580,6 +580,85 @@ class MainWindow(QMainWindow):
             self._set_power_indicator(axis, "nolink")
 
     # ------------------------------------------------------------------ #
+    # Концевые выключатели и аппаратная блокировка                       #
+    # ------------------------------------------------------------------ #
+    #: kind -> (цвет LED, светится ли, текст состояния входа, цвет текста)
+    _LIMIT_STYLES = {
+        "on":     ("#d83b01", True,  "замкнут",   "#d83b01"),
+        "off":    ("#107c41", False, "разомкнут", "#107c41"),
+        "nolink": ("#999999", False, "нет связи", "#999"),
+        "nodata": ("#999999", False, "—",         "#999"),
+    }
+    #: kind -> (цвет LED, светится ли, текст блокировки, цвет текста)
+    _BLOCK_STYLES = {
+        "blocked": ("#d83b01", True,  "Блокировка: ЗАБЛОКИРОВАНО", "#d83b01"),
+        "clear":   ("#107c41", False, "Блокировка: Норма",         "#107c41"),
+        "nolink":  ("#999999", False, "Блокировка: Нет связи",     "#999"),
+        "nodata":  ("#999999", False, "Блокировка: —",             "#999"),
+    }
+
+    def _build_safety_card(self) -> QWidget:
+        """Концевые выключатели X0/X1/X2 + индикатор блокировки и её сброс."""
+        frame, layout = card("Концевые выключатели и аппаратная блокировка",
+                             accent="#d83b01")
+        row = QHBoxLayout()
+
+        for index, (name, desc) in _LIMIT_INPUTS.items():
+            dot = led()
+            label = QLabel(f"[{name}] нет связи")
+            label.setStyleSheet("font-weight: bold; color: #999;")
+            label.setToolTip(desc)
+            self._limit_leds[index] = dot
+            self._limit_labels[index] = label
+            cell = QHBoxLayout()
+            cell.addWidget(dot)
+            cell.addWidget(label)
+            row.addLayout(cell)
+            row.addSpacing(16)
+        row.addStretch(1)
+
+        self._block_led = led()
+        self._block_label = QLabel("Блокировка: Нет связи")
+        self._block_label.setStyleSheet("font-weight: bold; color: #999;")
+        row.addWidget(self._block_led)
+        row.addWidget(self._block_label)
+        row.addSpacing(10)
+        row.addWidget(button("Сброс блокировки", "warn", self._reset_block))
+
+        layout.addLayout(row)
+        return frame
+
+    def _set_limit_indicator(self, index: int, kind: str) -> None:
+        dot = self._limit_leds.get(index)
+        label = self._limit_labels.get(index)
+        if dot is None or label is None:
+            return
+        color, glow, text, text_color = self._LIMIT_STYLES[kind]
+        set_led(dot, glow, color)
+        name = _LIMIT_INPUTS[index][0]
+        label.setText(f"[{name}] {text}")
+        label.setStyleSheet(f"font-weight: bold; color: {text_color};")
+
+    def _set_block_indicator(self, kind: str) -> None:
+        if self._block_led is None or self._block_label is None:
+            return
+        color, glow, text, text_color = self._BLOCK_STYLES[kind]
+        set_led(self._block_led, glow, color)
+        self._block_label.setText(text)
+        self._block_label.setStyleSheet(f"font-weight: bold; color: {text_color};")
+
+    def _set_all_safety_no_link(self) -> None:
+        """Сбросить концевики и блокировку в «Нет связи» (обрыв/нет сессии)."""
+        for index in self._limit_leds:
+            self._set_limit_indicator(index, "nolink")
+        self._set_block_indicator("nolink")
+
+    def _reset_block(self) -> None:
+        """Послать в ПЛК импульс M101, снимающий блокировку (RST M100)."""
+        self._service.reset_block()
+        self.log("Запрос снятия аппаратной блокировки (импульс M101).")
+
+    # ------------------------------------------------------------------ #
     # Telemetry                                                          #
     # ------------------------------------------------------------------ #
     def _on_telemetry(self, telemetry) -> None:
@@ -613,6 +692,24 @@ class MainWindow(QMainWindow):
         for i, dot in enumerate(self._output_leds):
             if i < len(telemetry.outputs):
                 set_led(dot, telemetry.outputs[i], OUTPUT_COLORS[i])
+
+        # Концевые выключатели X0..X2 (физические входы).
+        for index in self._limit_leds:
+            state = telemetry.limit_inputs.get(index)
+            if state is True:
+                self._set_limit_indicator(index, "on")
+            elif state is False:
+                self._set_limit_indicator(index, "off")
+            else:  # вход не прочитан, хотя связь есть
+                self._set_limit_indicator(index, "nodata")
+
+        # Признак аппаратной блокировки (катушка M100).
+        if telemetry.blocked is True:
+            self._set_block_indicator("blocked")
+        elif telemetry.blocked is False:
+            self._set_block_indicator("clear")
+        else:
+            self._set_block_indicator("nodata")
 
     # ------------------------------------------------------------------ #
     # Working-panel actions                                              #
