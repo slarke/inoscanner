@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from ..config import AXES, AXIS_SAFETY, AppSettings
+from ..config import AXES, AXIS_SAFETY, IO, AppSettings
 from ..logger import FileLogger
 from ..models import ScanStep, StepType
 from ..queue_backbone import MotionQueue
@@ -34,7 +34,7 @@ from .charts import XYPlotWidget
 from .common import button, card, double_spin, int_spin, led, set_led
 from .log_dock import LogDock
 from .queue_widget import ScenarioQueueWidget
-from .styles import COLOR_X, COLOR_Y, COLOR_Z, INPUT_COLORS, OUTPUT_COLORS
+from .styles import COLOR_X, COLOR_Y, COLOR_Z, OUTPUT_COLORS
 
 _AXIS_COLORS = {1: COLOR_X, 2: COLOR_Y, 3: COLOR_Z}
 
@@ -45,6 +45,18 @@ def _format_value(value: float) -> str:
     if abs(value) >= 10000 or (0 < abs(value) < 0.01):
         return f"{value:.2e}"
     return f"{value:.2f}"
+
+
+def output_led_states(outputs: List[bool]) -> List[Optional[bool]]:
+    """Состояния индикаторов Y0 / Y1 / Y2 из сырого окна коилов M50..M53.
+
+    ``None`` — коил не попал в прочитанное окно (индикатор не трогаем).
+    """
+    states: List[Optional[bool]] = []
+    for coil in IO.OUTPUT_LED_COILS:
+        index = coil - IO.OUTPUT_BASE
+        states.append(outputs[index] if 0 <= index < len(outputs) else None)
+    return states
 
 
 class MainWindow(QMainWindow):
@@ -70,7 +82,6 @@ class MainWindow(QMainWindow):
 
         self._axis_panels: Dict[int, AxisDebugPanel] = {}
         self._main_targets: Dict[int, tuple] = {}
-        self._input_leds: List[QLabel] = []
         self._output_leds: List[QLabel] = []
         # Индикаторы состояния двигателей (MC_Power) по осям на рабочей вкладке.
         self._power_leds: Dict[int, QLabel] = {}
@@ -696,12 +707,10 @@ class MainWindow(QMainWindow):
             else:  # коил не прочитан, хотя связь есть
                 self._set_power_indicator(axis, "nodata")
 
-        for i, dot in enumerate(self._input_leds):
-            if i < len(telemetry.inputs):
-                set_led(dot, telemetry.inputs[i], INPUT_COLORS[i])
-        for i, dot in enumerate(self._output_leds):
-            if i < len(telemetry.outputs):
-                set_led(dot, telemetry.outputs[i], OUTPUT_COLORS[i])
+        for i, (dot, state) in enumerate(
+                zip(self._output_leds, output_led_states(telemetry.outputs))):
+            if state is not None:
+                set_led(dot, state, OUTPUT_COLORS[i])
 
         # Концевые выключатели X1..X6 (физические входы, ключ = адрес).
         for addr in self._limit_leds:
@@ -740,8 +749,9 @@ class MainWindow(QMainWindow):
 
     def _emergency_stop(self) -> None:
         """Emergency stop: abort the scenario, stop motion and de-energise all axes."""
-        if self._runner.is_active:
-            self._runner.stop()
+        # Unconditionally: a recovery move is in flight without an active
+        # scenario, and its timeout would otherwise re-issue the move.
+        self._runner.stop()
         for axis in AXES:
             self._service.stop_axis(axis, _EMERGENCY_DECEL)
         for axis in AXES:

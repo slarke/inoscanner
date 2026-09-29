@@ -37,6 +37,9 @@ class ChannelWorker:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._recovery_blocked = False
+        # Запрос оператора на разблокировку; исполняется в потоке канала,
+        # т.к. только он владеет драйвером (инвариант №8).
+        self._ack_requested = threading.Event()
 
     # --- жизненный цикл ---
     def start(self) -> None:
@@ -54,9 +57,14 @@ class ChannelWorker:
         self._driver.close()
 
     def acknowledge_safe_state(self) -> None:
-        """Оператор подтвердил безопасное состояние после E-stop -> разблокировать."""
-        self._recovery_blocked = False
-        self._executor.recover()
+        """Оператор подтвердил безопасное состояние после E-stop -> разблокировать.
+
+        Не блокирует вызывающий (GUI) поток и не трогает драйвер из чужого
+        потока: только выставляет запрос, recovery выполняет поток канала в
+        ``_main_loop``. Подтверждение действует на текущий сеанс связи — при
+        переподключении E-stop-гейт проверяется заново.
+        """
+        self._ack_requested.set()
 
     # --- основной цикл с авто-перезапуском канала ---
     def _run(self) -> None:
@@ -85,6 +93,8 @@ class ChannelWorker:
                 time.sleep(self._cfg.reconnect_backoff_s)
 
     def _safe_recovery(self) -> None:
+        # Подтверждение из прошлого сеанса не должно снять свежую блокировку.
+        self._ack_requested.clear()
         regs = self._driver.read_holding(
             self._cfg.registers.status_block_start,
             self._cfg.registers.status_block_length,
@@ -105,6 +115,11 @@ class ChannelWorker:
     def _main_loop(self) -> None:
         idle = max(self._cfg.poll_interval_s, 0.02)
         while not self._stop.is_set():
+            if self._ack_requested.is_set():
+                self._ack_requested.clear()
+                self._recovery_blocked = False
+                self._executor.recover()
+                continue
             if self._recovery_blocked or not self._watchdog.connection_ok:
                 time.sleep(idle)
                 continue

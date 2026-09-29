@@ -152,6 +152,12 @@ class IO:
     INPUT_X0 = 100         # M100 - first of 4 input coils (X0..X3)
     DISCRETE_COUNT = 4
 
+    #: Коилы, отражающие состояние индикаторов выходов Y0 / Y1 / Y2 (в порядке
+    #: индикаторов на вкладке I/O).  Окно чтения M50..M53 содержит ещё M51
+    #: (RST Y0), который индикатором не является, поэтому индекс в снимке
+    #: ``Telemetry.outputs`` вычисляется как ``coil - OUTPUT_BASE``.
+    OUTPUT_LED_COILS = (Y0_SET, Y1_TOGGLE, Y2_FREQ_EN)
+
     # --- Концевые выключатели всех осей -------------------------------- #
     # Все концевики (X1..X6) читаются одним сплошным блоком discrete inputs
     # (FC02), затем раскладываются по осям через AXIS_SAFETY.  Чтение
@@ -201,7 +207,9 @@ class AppSettings:
 
     #: Durable command queue (servo_core backbone) — SQLite file and policy.
     queue_db_path: str = str(_BASE_DIR / "scan_queue.db")
-    #: Per-move completion timeout before a retry / dead-letter (ms).
+    #: Per-move completion slack before a retry / dead-letter (ms).  The
+    #: runner adds the estimated travel time (distance / speed x margin) on
+    #: top, so this only has to cover ramps, settling and link latency.
     move_timeout_ms: int = 30000
     #: Attempts (including the first) before a move goes to dead-letter.
     max_move_attempts: int = 3

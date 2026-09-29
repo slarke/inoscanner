@@ -11,9 +11,12 @@ once telemetry shows the axis has actually reached the target.  That is the
 "ack by fact" rule from servo_core's CLAUDE.md (invariant #2), realised with
 position feedback in place of an ``ack_seq`` handshake register.
 
-Failure handling mirrors the core: a move that does not arrive within
-``move_timeout_ms`` is retried up to ``max_move_attempts`` and then sent to the
-dead-letter queue (which aborts the scenario).
+Failure handling mirrors the core: a move that does not arrive within its
+timeout is retried up to ``max_move_attempts`` and then sent to the
+dead-letter queue (which aborts the scenario).  The timeout is per move:
+``move_timeout_ms`` of slack on top of the estimated travel time
+(distance / speed, with a margin), so long moves are not dead-lettered while
+the axis is still travelling.
 
 Crash recovery (:meth:`recover`, call it on every (re)connect): any move left
 IN_FLIGHT by a previous crashed run is reconciled against live telemetry.  If
@@ -21,6 +24,12 @@ the axis is already at the target the command is completed without moving again
 (idempotent); otherwise the *absolute* move is re-issued (safe to repeat —
 invariant #4).  Recovery is gated by E-stop (invariant #5): while E-stop is
 asserted, motion is not resumed until :meth:`acknowledge_safe_state` is called.
+
+Recovery and a scenario run are mutually exclusive: both drive the single
+in-flight slot.  A :meth:`start` requested while recovery is still in progress
+(e.g. resuming an interrupted session on connect) is deferred and runs once
+recovery has finished; if recovery fails or is stopped, the deferred start is
+cancelled.
 """
 
 from __future__ import annotations
@@ -49,6 +58,11 @@ _MOVE_PULSE_DWELL_MS = 200
 #: Delay between auto Servo-ON and the first step, so the drives finish
 #: enabling before the first motion command is issued.
 _SERVO_ENABLE_DELAY_MS = 500
+#: Margin on the estimated travel time (covers accel/decel ramps and speed
+#: tolerance) when computing a move's completion timeout.
+_TRAVEL_MARGIN = 1.5
+#: QTimer interval upper bound (signed 32-bit milliseconds).
+_MAX_TIMER_MS = 2**31 - 1
 
 
 class ScenarioRunner(QObject):
@@ -89,6 +103,11 @@ class ScenarioRunner(QObject):
         self._recovery_rest: list = []
         self._recovery_blocked_logged = False
         self._safe_ack = False
+        # True from recover() finding IN_FLIGHT moves until they are all
+        # reconciled (or recovery fails / is stopped).
+        self._recovering = False
+        # (steps, start_index) of a start() requested while recovering.
+        self._deferred_start: Optional[tuple] = None
 
         self._timeout = QTimer(self)
         self._timeout.setSingleShot(True)
@@ -114,6 +133,14 @@ class ScenarioRunner(QObject):
             return
         if self._active:
             self.log.emit("Сценарий уже выполняется.")
+            return
+        if self._recovering:
+            # Recovery owns the in-flight slot; running both at once would let
+            # one overwrite the other's move. Start once recovery is done.
+            self._deferred_start = (list(steps), start_index)
+            self.log.emit(
+                "Идёт recovery незавершённых команд — запуск сценария "
+                "отложен до его завершения.")
             return
 
         active = list(self._settings.active_axes)
@@ -157,7 +184,21 @@ class ScenarioRunner(QObject):
         return self._paused
 
     def stop(self) -> None:
+        cancelled_recovery = self._recovering or self._deferred_start is not None
+        self._deferred_start = None
+        if self._recovering:
+            # Unfinished moves stay IN_FLIGHT in the DB and are reconciled on
+            # the next connect; only this in-memory recovery pass is dropped.
+            self._recovering = False
+            self._recovery_pending = []
+            self._recovery_rest = []
+            self._safe_ack = False
         if not self._active and self._inflight is None:
+            if cancelled_recovery:
+                self.log.emit(
+                    "Recovery и отложенный запуск отменены оператором "
+                    "(незавершённые команды будут сверены при следующем "
+                    "подключении).")
             return
         self._active = False
         self._paused = False
@@ -185,11 +226,12 @@ class ScenarioRunner(QObject):
     # ------------------------------------------------------------------ #
     def recover(self) -> None:
         """Reconcile moves left IN_FLIGHT by a previous crashed run."""
-        if self._active:
+        if self._active or self._recovering:
             return
         pending = self._queue.resume_in_flight()
         if not pending:
             return
+        self._recovering = True
         self._recovery_pending = list(pending)
         self._recovery_blocked_logged = False
         self.log.emit(
@@ -199,7 +241,7 @@ class ScenarioRunner(QObject):
         self._try_recovery()
 
     def _try_recovery(self) -> None:
-        if not self._recovery_pending:
+        if not self._recovery_pending or self._active:
             return
         if self._last_telemetry is None:
             return  # wait for the first telemetry frame to assess state
@@ -227,7 +269,7 @@ class ScenarioRunner(QObject):
             else:
                 remaining.append(q)
         if not remaining:
-            self.log.emit("Recovery завершён.")
+            self._finish_recovery()
             return
         q = remaining[0]
         move = decode_move(q)
@@ -237,8 +279,19 @@ class ScenarioRunner(QObject):
             f"(ось {move.axis} → {move.pos} мм).")
         self._drive(q, move)
 
+    def _finish_recovery(self) -> None:
+        """All IN_FLIGHT moves reconciled: release the slot, run a deferred start."""
+        self._recovering = False
+        self._safe_ack = False   # an acknowledgement covers one recovery only
+        self.log.emit("Recovery завершён.")
+        if self._deferred_start is not None:
+            steps, index = self._deferred_start
+            self._deferred_start = None
+            self.log.emit("Запуск отложенного сценария.")
+            self.start(steps, index)
+
     # ------------------------------------------------------------------ #
-    # Step machine                                                       #
+    # Step machine                                                      #
     # ------------------------------------------------------------------ #
     def _execute(self) -> None:
         if not self._active:
@@ -291,7 +344,7 @@ class ScenarioRunner(QObject):
         self._inflight_move = move
         self._service.move_absolute(move.axis, move.pos, move.spd, move.pulse)
         self._queue.notify_sent(q)
-        self._timeout.start(self._settings.move_timeout_ms)
+        self._timeout.start(self._move_timeout_ms(move))
 
     def _advance(self) -> None:
         if not self._active:
@@ -315,6 +368,15 @@ class ScenarioRunner(QObject):
         self.finished.emit()
 
     def _abort(self, reason: str) -> None:
+        if self._recovering:
+            self._recovering = False
+            self._recovery_pending = []
+            self._recovery_rest = []
+            self._safe_ack = False
+            if self._deferred_start is not None:
+                self._deferred_start = None
+                self.log.emit("Recovery не завершён — отложенный запуск "
+                              "сценария отменён.")
         self._active = False
         self._paused = False
         self._parked = False
@@ -365,7 +427,7 @@ class ScenarioRunner(QObject):
                 self._recovery_rest = []
                 self._reconcile(rest)
             else:
-                self.log.emit("Recovery завершён.")
+                self._finish_recovery()
 
     def _on_move_timeout(self) -> None:
         if self._inflight is None:
@@ -397,6 +459,21 @@ class ScenarioRunner(QObject):
     # ------------------------------------------------------------------ #
     # Helpers                                                            #
     # ------------------------------------------------------------------ #
+    def _move_timeout_ms(self, move: Move) -> int:
+        """Completion timeout for one move: slack + estimated travel time.
+
+        Travel time is ``|target - current| / speed`` (speed in mm/s) times
+        :data:`_TRAVEL_MARGIN`.  Without a telemetry frame for the axis or with
+        a non-positive speed only the configured ``move_timeout_ms`` is used.
+        """
+        base = self._settings.move_timeout_ms
+        t = self._last_telemetry
+        axis = t.axes.get(move.axis) if t is not None else None
+        if axis is None or move.spd <= 0:
+            return base
+        travel_ms = abs(move.pos - axis.position) / move.spd * 1000.0
+        return min(int(base + travel_ms * _TRAVEL_MARGIN), _MAX_TIMER_MS)
+
     def _at_target(self, move: Move) -> bool:
         if self._last_telemetry is None:
             return False
