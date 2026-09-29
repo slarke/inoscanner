@@ -105,6 +105,38 @@ AXES: Dict[int, AxisRegisters] = {
 }
 
 
+@dataclass(frozen=True)
+class AxisSafety:
+    """Аппаратная блокировка одной оси по двум концевым выключателям.
+
+    Каждая ось имеет левый и правый концевик (физические входы ПЛК,
+    читаются как Modbus discrete inputs, FC02).  Срабатывание любого
+    концевика на ПЛК защёлкивает катушку ``block_latch`` (`X → SET Mxxx`),
+    что останавливает движение.  Импульс на ``block_reset`` снимает защёлку
+    (`Mxxx → RST`).  Софт читает ``block_latch`` как признак «заблокировано»
+    и пишет ``block_reset`` по кнопке «Сброс блокировки».
+    """
+
+    name: str           # имя оси (X / Y / Z) для подписей
+    limit_left: int     # discrete-input адрес левого концевика (Xn)
+    limit_right: int    # discrete-input адрес правого концевика (Xn)
+    block_latch: int    # M-coil: признак "заблокировано" (чтение)
+    block_reset: int    # M-coil: импульс снятия блокировки (запись)
+
+
+#: Ось (1=X, 2=Y, 3=Z) -> аппаратная блокировка по концевикам.  Адреса взяты
+#: из спецификации task.txt:
+#:   X: концевики X1/X2, блокировка M100, сброс M101;
+#:   Y: концевики X3/X4, блокировка M200, сброс M201;
+#:   Z: концевики X5/X6, блокировка M300, сброс M301.
+#: Входы Xn читаются как discrete inputs по адресу n (X1=1 … X6=6).
+AXIS_SAFETY: Dict[int, AxisSafety] = {
+    1: AxisSafety("X", limit_left=1, limit_right=2, block_latch=100, block_reset=101),
+    2: AxisSafety("Y", limit_left=3, limit_right=4, block_latch=200, block_reset=201),
+    3: AxisSafety("Z", limit_left=5, limit_right=6, block_latch=300, block_reset=301),
+}
+
+
 class IO:
     """Global diagnostic and Easy521 discrete I/O addresses."""
 
@@ -120,20 +152,17 @@ class IO:
     INPUT_X0 = 100         # M100 - first of 4 input coils (X0..X3)
     DISCRETE_COUNT = 4
 
-    # --- Аппаратная блокировка по концевому выключателю ----------------- #
-    # В MAIN.LD физический вход X0 защёлкивает M100 (`X0 → SET M100`), а
-    # катушка M101 снимает защёлку (`M101 → RST M100`).  Поэтому:
-    #   M100 = признак "заблокировано" (читаем как coil),
-    #   M101 = команда снятия блокировки (пишем импульсом).
-    BLOCK_LATCH = 100      # M100 - заблокированное состояние (чтение coil)
-    BLOCK_RESET = 101      # M101 - снятие блокировки (импульс записи coil)
-
-    # Концевые выключатели — физические входы ПЛК X0/X1/X2, читаются как
-    # Modbus discrete inputs (FC02): X0=адрес 0, X1=1, X2=2.  Чтение
-    # толерантное: если у ПЛК нет такой проекции, индикаторы гаснут, но
-    # остальная телеметрия не страдает.
-    LIMIT_INPUT_BASE = 0
-    LIMIT_INPUT_COUNT = 3
+    # --- Концевые выключатели всех осей -------------------------------- #
+    # Все концевики (X1..X6) читаются одним сплошным блоком discrete inputs
+    # (FC02), затем раскладываются по осям через AXIS_SAFETY.  Чтение
+    # толерантное: если у ПЛК нет такой проекции входов, индикаторы гаснут,
+    # но остальная телеметрия не страдает.  Окно вычисляется из AXIS_SAFETY,
+    # чтобы карта адресов оставалась единственным источником истины.
+    LIMIT_INPUT_BASE = min(
+        min(s.limit_left, s.limit_right) for s in AXIS_SAFETY.values())
+    LIMIT_INPUT_COUNT = max(
+        max(s.limit_left, s.limit_right) for s in AXIS_SAFETY.values()
+    ) - LIMIT_INPUT_BASE + 1
 
 
 @dataclass

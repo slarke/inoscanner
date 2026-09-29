@@ -35,7 +35,7 @@ class PlcService(QObject):
     _stop = pyqtSignal(int, float)
     _set_pos = pyqtSignal(int, float)
     _pulse = pyqtSignal()
-    _reset_block = pyqtSignal()
+    _reset_block = pyqtSignal(int)
     _y0 = pyqtSignal(bool)
     _output = pyqtSignal(bool)
     _freq = pyqtSignal(bool, float)
@@ -133,9 +133,9 @@ class PlcService(QObject):
     def pulse_trigger(self) -> None:
         self._pulse.emit()
 
-    def reset_block(self) -> None:
-        """Снять аппаратную блокировку (импульс M101)."""
-        self._reset_block.emit()
+    def reset_block(self, axis: int) -> None:
+        """Снять аппаратную блокировку оси (импульс block_reset)."""
+        self._reset_block.emit(axis)
 
     def set_y0(self, on: bool) -> None:
         self._y0.emit(on)

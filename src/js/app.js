@@ -10,6 +10,35 @@ import './plc.js';
 
 const gid = (id) => document.getElementById(id);
 
+// --- Хелперы индикаторов (двигатели / концевики / блокировка) --- //
+function setDot(id, on, color) {
+  const el = gid(id);
+  if (!el) return;
+  el.style.backgroundColor = on ? color : "#ccc";
+  el.style.boxShadow = on ? `0 0 8px ${color}` : "none";
+}
+
+function setStateLabel(id, text, color) {
+  const el = gid(id);
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = color;
+}
+
+// Сброс всех индикаторов состояния в «нет связи» (обрыв / нет сессии).
+function setAllSafetyNoLink() {
+  for (let a = 1; a <= 3; a++) {
+    setDot(`pwr_led_${a}`, false, "#999");
+    setStateLabel(`pwr_lbl_${a}`, "Двигатель: нет связи", "#999");
+    setDot(`block_led_${a}`, false, "#999");
+    setStateLabel(`block_lbl_${a}`, "Блокировка: Нет связи", "#999");
+  }
+  for (let x = 1; x <= 6; x++) {
+    setDot(`lim_${x}`, false, "#999");
+    setStateLabel(`limlbl_${x}`, `[X${x}] нет связи`, "#999");
+  }
+}
+
 export let isConnected = false;
 export let lastX = 0; 
 export let lastY = 0; 
@@ -108,9 +137,11 @@ listen('connection-status', (event) => {
   } else if (status === 'reconnecting') {
     isConnected = false;
     if (btn) { btn.innerText = "Переподключение…"; btn.className = "btn-warn"; }
+    setAllSafetyNoLink();
   } else { // disconnected
     isConnected = false;
     if (btn) { btn.innerText = "Связь: Отсутствует"; btn.className = "btn-danger"; }
+    setAllSafetyNoLink();
   }
   if (message) log(`[Связь] ${message}`);
 
@@ -215,22 +246,44 @@ listen('telemetry-update', (event) => {
       document.getElementById('xRealStats').innerText = `Реальные: ${formatValue(t.x_pos)} мм`;
       document.getElementById('xRawPos').innerText = `D210: [${t.x_pos_raw.join(', ')}]`;
       document.getElementById('yRealStats').innerText = `Реальные: ${formatValue(t.y_pos)} мм`;
-      document.getElementById('yRawPos').innerText = `D220: [${t.y_pos_raw.join(', ')}]`;
+      document.getElementById('yRawPos').innerText = `D230: [${t.y_pos_raw.join(', ')}]`;
       document.getElementById('zRealStats').innerText = `Реальные: ${formatValue(t.z_pos)} мм`;
-      document.getElementById('zRawPos').innerText = `D240: [${t.z_pos_raw.join(', ')}]`;
+      document.getElementById('zRawPos').innerText = `D250: [${t.z_pos_raw.join(', ')}]`;
     }
     
     refreshCanvases(t.x_pos, t.y_pos, t.z_pos);
 
-    if (t.inputs && t.inputs.length >= 4) {
-      const inputColors = ["#107c41", "#107c41", "#0078d4", "#d83b01"]; 
-      for (let i = 0; i < 4; i++) {
-        let led = document.getElementById(`led_x${i}`);
-        if (led) {
-          led.style.backgroundColor = t.inputs[i] ? inputColors[i] : "#ccc";
-          led.style.boxShadow = t.inputs[i] ? `0 0 8px ${inputColors[i]}` : "none";
-        }
-      }
+    // Состояние двигателей (MC_Power) по осям [X,Y,Z] — обратное чтение коилов.
+    if (Array.isArray(t.power)) {
+      t.power.forEach((st, i) => {
+        const a = i + 1;
+        if (!gid(`pwr_led_${a}`)) return;
+        if (st === true) { setDot(`pwr_led_${a}`, true, "#107c41"); setStateLabel(`pwr_lbl_${a}`, "Двигатель: ВКЛ", "#107c41"); }
+        else if (st === false) { setDot(`pwr_led_${a}`, false, "#107c41"); setStateLabel(`pwr_lbl_${a}`, "Двигатель: ВЫКЛ", "#888"); }
+        else { setDot(`pwr_led_${a}`, false, "#999"); setStateLabel(`pwr_lbl_${a}`, "Двигатель: —", "#999"); }
+      });
+    }
+
+    // Концевые выключатели X1..X6 (адрес = индекс+1).
+    if (Array.isArray(t.limit_inputs)) {
+      t.limit_inputs.forEach((st, i) => {
+        const addr = i + 1;
+        if (!gid(`lim_${addr}`)) return;
+        if (st === true) { setDot(`lim_${addr}`, true, "#d83b01"); setStateLabel(`limlbl_${addr}`, `[X${addr}] замкнут`, "#d83b01"); }
+        else if (st === false) { setDot(`lim_${addr}`, false, "#107c41"); setStateLabel(`limlbl_${addr}`, `[X${addr}] разомкнут`, "#107c41"); }
+        else { setDot(`lim_${addr}`, false, "#999"); setStateLabel(`limlbl_${addr}`, `[X${addr}] —`, "#999"); }
+      });
+    }
+
+    // Признаки аппаратной блокировки по осям (M100/M200/M300).
+    if (Array.isArray(t.blocked)) {
+      t.blocked.forEach((st, i) => {
+        const a = i + 1;
+        if (!gid(`block_led_${a}`)) return;
+        if (st === true) { setDot(`block_led_${a}`, true, "#d83b01"); setStateLabel(`block_lbl_${a}`, "Блокировка: ЗАБЛОКИРОВАНО", "#d83b01"); }
+        else if (st === false) { setDot(`block_led_${a}`, false, "#107c41"); setStateLabel(`block_lbl_${a}`, "Блокировка: Норма", "#107c41"); }
+        else { setDot(`block_led_${a}`, false, "#999"); setStateLabel(`block_lbl_${a}`, "Блокировка: —", "#999"); }
+      });
     }
 
     if (t.outputs && t.outputs.length >= 3) {

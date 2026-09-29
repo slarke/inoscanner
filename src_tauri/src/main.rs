@@ -27,8 +27,14 @@ struct TelemetryPayload {
     x_servo_error: u16, x_axis_error: u16,
     y_servo_error: u16, y_axis_error: u16,
     z_servo_error: u16, z_axis_error: u16,
-    inputs: Vec<bool>,
     outputs: Vec<bool>,
+    /// Состояние силовых контуров MC_Power по осям [X,Y,Z]: Some(true/false) —
+    /// прочитанный коил, None — коил недоступен (неизвестно).
+    power: Vec<Option<bool>>,
+    /// Концевые выключатели X1..X6 (discrete inputs): Some(bool) / None.
+    limit_inputs: Vec<Option<bool>>,
+    /// Признак аппаратной блокировки по осям [X,Y,Z] (катушки M100/M200/M300).
+    blocked: Vec<Option<bool>>,
 }
 
 /// Статус Modbus-связи, транслируемый во фронтенд (событие `connection-status`).
@@ -94,7 +100,29 @@ async fn poll_once(ctx: &mut Context) -> std::io::Result<TelemetryPayload> {
     let z_err_regs = ctx.read_holding_registers(config::D3_SERVO_ERROR_ID, 3).await.unwrap_or(vec![0, 0, 0]);
 
     let out_coils = ctx.read_coils(config::M_Y0_SET, 4).await.unwrap_or(vec![false, false, false, false]);
-    let in_coils = ctx.read_coils(config::M_INPUT_X0, 4).await.unwrap_or(vec![false, false, false, false]);
+
+    // Состояние силовых контуров (MC_Power) — толерантное обратное чтение коилов
+    // M10/M20/M30: None означает «коил недоступен», не валит остальной опрос.
+    let power = vec![
+        ctx.read_coils(config::M1_POWER, 1).await.ok().and_then(|v| v.into_iter().next()),
+        ctx.read_coils(config::M2_POWER, 1).await.ok().and_then(|v| v.into_iter().next()),
+        ctx.read_coils(config::M3_POWER, 1).await.ok().and_then(|v| v.into_iter().next()),
+    ];
+
+    // Концевые выключатели X1..X6 — одним блоком discrete inputs (FC02).
+    let mut limit_inputs: Vec<Option<bool>> = vec![None; config::LIMIT_INPUT_COUNT as usize];
+    if let Ok(bits) = ctx.read_discrete_inputs(config::LIMIT_INPUT_BASE, config::LIMIT_INPUT_COUNT).await {
+        for (i, b) in bits.into_iter().enumerate().take(limit_inputs.len()) {
+            limit_inputs[i] = Some(b);
+        }
+    }
+
+    // Признаки блокировки по осям (катушки M100/M200/M300) — толерантно.
+    let blocked = vec![
+        ctx.read_coils(config::AXIS1_BLOCK_LATCH, 1).await.ok().and_then(|v| v.into_iter().next()),
+        ctx.read_coils(config::AXIS2_BLOCK_LATCH, 1).await.ok().and_then(|v| v.into_iter().next()),
+        ctx.read_coils(config::AXIS3_BLOCK_LATCH, 1).await.ok().and_then(|v| v.into_iter().next()),
+    ];
 
     Ok(TelemetryPayload {
         x_pos: words_to_f32(&x_p_regs), x_vel: words_to_f32(&x_v_regs),
@@ -107,8 +135,10 @@ async fn poll_once(ctx: &mut Context) -> std::io::Result<TelemetryPayload> {
         x_servo_error: x_err_regs[0], x_axis_error: x_err_regs[2],
         y_servo_error: y_err_regs[0], y_axis_error: y_err_regs[2],
         z_servo_error: z_err_regs[0], z_axis_error: z_err_regs[2],
-        inputs: in_coils,
         outputs: out_coils,
+        power,
+        limit_inputs,
+        blocked,
     })
 }
 
@@ -317,6 +347,27 @@ async fn send_reset(state: State<'_, PlcManager>, axis: u8) -> Result<(), String
         ctx.write_single_coil(addr, true).await.map_err(|e| e.to_string())?;
         sleep(Duration::from_millis(100)).await;
         ctx.write_single_coil(addr, false).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Снять аппаратную блокировку оси: импульс на катушку сброса
+/// (`Mxxx -> RST`). Ось 1=X (M101), 2=Y (M201), 3=Z (M301).
+#[tauri::command]
+async fn send_block_reset(state: State<'_, PlcManager>, axis: u8) -> Result<(), String> {
+    let mut ctx_lock = state.context.lock().await;
+    if let Some(ref mut ctx) = *ctx_lock {
+        let coil = match axis {
+            1 => config::AXIS1_BLOCK_RESET,
+            2 => config::AXIS2_BLOCK_RESET,
+            3 => config::AXIS3_BLOCK_RESET,
+            _ => return Err("Неверный номер оси".to_string()),
+        };
+        ctx.write_single_coil(coil, true).await.map_err(|e| e.to_string())?;
+        sleep(Duration::from_millis(100)).await;
+        ctx.write_single_coil(coil, false).await.map_err(|e| e.to_string())?;
+    } else {
+        return Err("Нет связи с ПЛК".to_string());
     }
     Ok(())
 }
@@ -610,7 +661,7 @@ fn main() {
             send_move_abs, send_move_velocity, send_pulse_trigger, send_stop,
             send_set_position, save_sequence_json, load_sequence_json, append_to_log_file,
             send_output_toggle, send_freq_config, send_y0_toggle,
-            enable_all_motors, emergency_stop_all,
+            enable_all_motors, emergency_stop_all, send_block_reset,
             load_app_config, save_app_config,
             load_scan_session, save_scan_session, clear_scan_session
         ])

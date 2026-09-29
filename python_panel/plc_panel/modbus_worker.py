@@ -20,7 +20,7 @@ except ImportError:  # pragma: no cover - pymodbus 2.x fallback
 
 from . import scpi
 from .codec import float_to_words, floats_to_words, words_to_float
-from .config import AXES, IO
+from .config import AXES, AXIS_SAFETY, IO
 from .models import AxisTelemetry, Telemetry
 
 
@@ -279,17 +279,25 @@ class PlcWorker(QObject):
         except Exception as exc:  # noqa: BLE001
             self._fail("Управление Y0", exc)
 
-    @pyqtSlot()
-    def reset_block(self) -> None:
-        """Снять аппаратную блокировку: импульс M101 (`M101 → RST M100`)."""
-        self.log.emit("Кнопка: снятие блокировки (импульс M101 → сброс M100)")
-        if not self._require_client("Снятие блокировки"):
+    @pyqtSlot(int)
+    def reset_block(self, axis: int) -> None:
+        """Снять аппаратную блокировку оси: импульс block_reset (`Mxxx → RST`)."""
+        safety = AXIS_SAFETY.get(axis)
+        if safety is None:
+            self.command_error.emit(f"Снятие блокировки: неверный номер оси {axis}")
+            return
+        label = f"Снятие блокировки (ось {safety.name})"
+        self.log.emit(
+            f"Кнопка: снятие блокировки оси {safety.name} "
+            f"(импульс M{safety.block_reset} → сброс M{safety.block_latch})")
+        if not self._require_client(label):
             return
         try:
-            self._pulse_coil(IO.BLOCK_RESET, 100)
-            self.log.emit("Команда снятия блокировки отработана (M101)")
+            self._pulse_coil(safety.block_reset, 100)
+            self.log.emit(
+                f"Команда снятия блокировки отработана (M{safety.block_reset})")
         except Exception as exc:  # noqa: BLE001
-            self._fail("Снятие блокировки", exc)
+            self._fail(label, exc)
 
     @pyqtSlot(bool)
     def set_output(self, on: bool) -> None:
@@ -358,20 +366,23 @@ class PlcWorker(QObject):
                     snapshot.power[number] = None
             snapshot.outputs = self._read_bits(IO.OUTPUT_BASE, IO.DISCRETE_COUNT)
             snapshot.inputs = self._read_bits(IO.INPUT_X0, IO.DISCRETE_COUNT)
-            # Концевые выключатели X0..X2 (физические входы) и признак
-            # блокировки M100 — толерантно, чтобы недоступная проекция входов
-            # не валила весь опрос телеметрии.
+            # Концевые выключатели всех осей (физические входы X1..X6) и
+            # признаки блокировки M100/M200/M300 — толерантно, чтобы
+            # недоступная проекция входов не валила весь опрос телеметрии.
+            addrs = range(IO.LIMIT_INPUT_BASE,
+                          IO.LIMIT_INPUT_BASE + IO.LIMIT_INPUT_COUNT)
             try:
                 bits = self._read_discrete(IO.LIMIT_INPUT_BASE, IO.LIMIT_INPUT_COUNT)
-                for i in range(IO.LIMIT_INPUT_COUNT):
-                    snapshot.limit_inputs[i] = bits[i]
+                for addr in addrs:
+                    snapshot.limit_inputs[addr] = bits[addr - IO.LIMIT_INPUT_BASE]
             except Exception:  # noqa: BLE001
-                for i in range(IO.LIMIT_INPUT_COUNT):
-                    snapshot.limit_inputs[i] = None
-            try:
-                snapshot.blocked = self._read_bits(IO.BLOCK_LATCH, 1)[0]
-            except Exception:  # noqa: BLE001
-                snapshot.blocked = None
+                for addr in addrs:
+                    snapshot.limit_inputs[addr] = None
+            for number, safety in AXIS_SAFETY.items():
+                try:
+                    snapshot.blocked[number] = self._read_bits(safety.block_latch, 1)[0]
+                except Exception:  # noqa: BLE001
+                    snapshot.blocked[number] = None
             self.telemetry.emit(snapshot)
             self._poll_failures = 0
         except Exception as exc:  # noqa: BLE001 - distinguish glitch vs lost link

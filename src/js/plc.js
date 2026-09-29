@@ -131,6 +131,16 @@ export async function emergencyStopAll() {
   if (typeof window.stopQueue === 'function') window.stopQueue();
 }
 
+// Снятие аппаратной блокировки оси по концевику (импульс M101/M201/M301).
+export async function sendBlockReset(axis) {
+  let aName = axis === 1 ? 'X' : (axis === 2 ? 'Y' : 'Z');
+  log(`Кнопка: снятие аппаратной блокировки оси ${aName} (импульс сброса)`);
+  try {
+    await invoke('send_block_reset', { axis });
+    log(`Ось ${aName}: команда снятия блокировки отправлена в ПЛК`);
+  } catch(e) { log("Ошибка снятия блокировки: " + e); }
+}
+
 export async function setFreqConfig(enabled) {
   let freqVal = parseFloat(document.getElementById('dbg_out_freq').value);
   if (isNaN(freqVal)) { log("Ошибка: Задайте валидное значение частоты!"); return; }
@@ -147,3 +157,4 @@ window.moveVelDbg = moveVelDbg; window.stopVelDbg = stopVelDbg; window.readAxisE
 window.triggerPulseDebug = triggerPulseDebug; window.setOutputToggle = setOutputToggle;
 window.setFreqConfig = setFreqConfig; window.setY0Toggle = setY0Toggle;
 window.enableAllMotors = enableAllMotors; window.emergencyStopAll = emergencyStopAll;
+window.sendBlockReset = sendBlockReset;

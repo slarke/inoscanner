@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from ..config import AXES, AppSettings
+from ..config import AXES, AXIS_SAFETY, AppSettings
 from ..logger import FileLogger
 from ..models import ScanStep, StepType
 from ..queue_backbone import MotionQueue
@@ -40,15 +40,6 @@ _AXIS_COLORS = {1: COLOR_X, 2: COLOR_Y, 3: COLOR_Z}
 
 #: Deceleration used by the emergency-stop button (fast controlled stop).
 _EMERGENCY_DECEL = 5000.0
-
-#: Концевые выключатели (физические входы ПЛК): индекс -> (имя, подсказка).
-#: X0 в MAIN.LD защёлкивает блокировку M100; X1/X2 — прочие концевики/датчики.
-_LIMIT_INPUTS = {
-    0: ("X0", "Аварийный концевик — защёлкивает блокировку (M100)"),
-    1: ("X1", "Концевой выключатель / датчик X1"),
-    2: ("X2", "Концевой выключатель / датчик X2"),
-}
-
 
 def _format_value(value: float) -> str:
     if abs(value) >= 10000 or (0 < abs(value) < 0.01):
@@ -84,11 +75,12 @@ class MainWindow(QMainWindow):
         # Индикаторы состояния двигателей (MC_Power) по осям на рабочей вкладке.
         self._power_leds: Dict[int, QLabel] = {}
         self._power_labels: Dict[int, QLabel] = {}
-        # Концевые выключатели X0/X1/X2 и индикатор аппаратной блокировки (M100).
+        # Концевые выключатели X1..X6 (ключ = адрес входа) и индикаторы
+        # аппаратной блокировки по осям (ключ = номер оси, катушки M100/M200/M300).
         self._limit_leds: Dict[int, QLabel] = {}
         self._limit_labels: Dict[int, QLabel] = {}
-        self._block_led: QLabel = None
-        self._block_label: QLabel = None
+        self._block_leds: Dict[int, QLabel] = {}
+        self._block_labels: Dict[int, QLabel] = {}
 
         self._build_ui()
         self._connect_signals()
@@ -598,65 +590,83 @@ class MainWindow(QMainWindow):
     }
 
     def _build_safety_card(self) -> QWidget:
-        """Концевые выключатели X0/X1/X2 + индикатор блокировки и её сброс."""
+        """Концевики X1..X6 и блокировка по каждой оси (X / Y / Z) с кнопкой сброса."""
         frame, layout = card("Концевые выключатели и аппаратная блокировка",
                              accent="#d83b01")
-        row = QHBoxLayout()
+        for axis, safety in AXIS_SAFETY.items():
+            layout.addLayout(self._build_axis_safety_row(axis, safety))
+        return frame
 
-        for index, (name, desc) in _LIMIT_INPUTS.items():
+    def _build_axis_safety_row(self, axis: int, safety) -> QHBoxLayout:
+        """Строка одной оси: два концевика, индикатор блокировки, кнопка сброса."""
+        row = QHBoxLayout()
+        title = QLabel(f"Ось {safety.name}")
+        title.setStyleSheet("font-weight: bold; min-width: 52px;")
+        row.addWidget(title)
+
+        for addr, side in ((safety.limit_left, "левый"),
+                           (safety.limit_right, "правый")):
             dot = led()
-            label = QLabel(f"[{name}] нет связи")
+            label = QLabel(f"[X{addr}] нет связи")
             label.setStyleSheet("font-weight: bold; color: #999;")
-            label.setToolTip(desc)
-            self._limit_leds[index] = dot
-            self._limit_labels[index] = label
+            label.setToolTip(f"Концевой выключатель ({side}) оси {safety.name}")
+            self._limit_leds[addr] = dot
+            self._limit_labels[addr] = label
             cell = QHBoxLayout()
             cell.addWidget(dot)
             cell.addWidget(label)
             row.addLayout(cell)
-            row.addSpacing(16)
+            row.addSpacing(14)
         row.addStretch(1)
 
-        self._block_led = led()
-        self._block_label = QLabel("Блокировка: Нет связи")
-        self._block_label.setStyleSheet("font-weight: bold; color: #999;")
-        row.addWidget(self._block_led)
-        row.addWidget(self._block_label)
+        block_led = led()
+        block_label = QLabel("Блокировка: Нет связи")
+        block_label.setStyleSheet("font-weight: bold; color: #999;")
+        self._block_leds[axis] = block_led
+        self._block_labels[axis] = block_label
+        row.addWidget(block_led)
+        row.addWidget(block_label)
         row.addSpacing(10)
-        row.addWidget(button("Сброс блокировки", "warn", self._reset_block))
+        # Связываем axis по умолчанию аргумента, чтобы lambda не захватывала
+        # переменную цикла; clicked отдаёт bool checked — глотаем его как `_`.
+        row.addWidget(button(
+            "Сброс блокировки", "warn",
+            lambda _=False, a=axis: self._reset_block(a)))
+        return row
 
-        layout.addLayout(row)
-        return frame
-
-    def _set_limit_indicator(self, index: int, kind: str) -> None:
-        dot = self._limit_leds.get(index)
-        label = self._limit_labels.get(index)
+    def _set_limit_indicator(self, addr: int, kind: str) -> None:
+        dot = self._limit_leds.get(addr)
+        label = self._limit_labels.get(addr)
         if dot is None or label is None:
             return
         color, glow, text, text_color = self._LIMIT_STYLES[kind]
         set_led(dot, glow, color)
-        name = _LIMIT_INPUTS[index][0]
-        label.setText(f"[{name}] {text}")
+        label.setText(f"[X{addr}] {text}")
         label.setStyleSheet(f"font-weight: bold; color: {text_color};")
 
-    def _set_block_indicator(self, kind: str) -> None:
-        if self._block_led is None or self._block_label is None:
+    def _set_block_indicator(self, axis: int, kind: str) -> None:
+        dot = self._block_leds.get(axis)
+        label = self._block_labels.get(axis)
+        if dot is None or label is None:
             return
         color, glow, text, text_color = self._BLOCK_STYLES[kind]
-        set_led(self._block_led, glow, color)
-        self._block_label.setText(text)
-        self._block_label.setStyleSheet(f"font-weight: bold; color: {text_color};")
+        set_led(dot, glow, color)
+        label.setText(text)
+        label.setStyleSheet(f"font-weight: bold; color: {text_color};")
 
     def _set_all_safety_no_link(self) -> None:
         """Сбросить концевики и блокировку в «Нет связи» (обрыв/нет сессии)."""
-        for index in self._limit_leds:
-            self._set_limit_indicator(index, "nolink")
-        self._set_block_indicator("nolink")
+        for addr in self._limit_leds:
+            self._set_limit_indicator(addr, "nolink")
+        for axis in self._block_leds:
+            self._set_block_indicator(axis, "nolink")
 
-    def _reset_block(self) -> None:
-        """Послать в ПЛК импульс M101, снимающий блокировку (RST M100)."""
-        self._service.reset_block()
-        self.log("Запрос снятия аппаратной блокировки (импульс M101).")
+    def _reset_block(self, axis: int) -> None:
+        """Послать в ПЛК импульс снятия блокировки выбранной оси."""
+        safety = AXIS_SAFETY.get(axis)
+        name = safety.name if safety else f"#{axis}"
+        self._service.reset_block(axis)
+        self.log(f"Запрос снятия аппаратной блокировки оси {name}.")
 
     # ------------------------------------------------------------------ #
     # Telemetry                                                          #
@@ -693,23 +703,25 @@ class MainWindow(QMainWindow):
             if i < len(telemetry.outputs):
                 set_led(dot, telemetry.outputs[i], OUTPUT_COLORS[i])
 
-        # Концевые выключатели X0..X2 (физические входы).
-        for index in self._limit_leds:
-            state = telemetry.limit_inputs.get(index)
+        # Концевые выключатели X1..X6 (физические входы, ключ = адрес).
+        for addr in self._limit_leds:
+            state = telemetry.limit_inputs.get(addr)
             if state is True:
-                self._set_limit_indicator(index, "on")
+                self._set_limit_indicator(addr, "on")
             elif state is False:
-                self._set_limit_indicator(index, "off")
+                self._set_limit_indicator(addr, "off")
             else:  # вход не прочитан, хотя связь есть
-                self._set_limit_indicator(index, "nodata")
+                self._set_limit_indicator(addr, "nodata")
 
-        # Признак аппаратной блокировки (катушка M100).
-        if telemetry.blocked is True:
-            self._set_block_indicator("blocked")
-        elif telemetry.blocked is False:
-            self._set_block_indicator("clear")
-        else:
-            self._set_block_indicator("nodata")
+        # Признаки аппаратной блокировки по осям (катушки M100/M200/M300).
+        for axis in self._block_leds:
+            state = telemetry.blocked.get(axis)
+            if state is True:
+                self._set_block_indicator(axis, "blocked")
+            elif state is False:
+                self._set_block_indicator(axis, "clear")
+            else:
+                self._set_block_indicator(axis, "nodata")
 
     # ------------------------------------------------------------------ #
     # Working-panel actions                                              #

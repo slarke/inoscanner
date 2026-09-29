@@ -34,12 +34,13 @@ class Telemetry:
     #: Состояние силового контура (MC_Power) по осям: True=включён, False=выключен,
     #: None=неизвестно (коил не прочитан). Считывается с коилов M10/M20/M30.
     power: Dict[int, Optional[bool]] = field(default_factory=dict)
-    #: Концевые выключатели (физические входы X0/X1/X2): индекс 0..2 ->
-    #: True=замкнут, False=разомкнут, None=неизвестно (вход не прочитан).
+    #: Концевые выключатели (физические входы X1..X6): ключ = discrete-input
+    #: адрес (1..6) -> True=замкнут, False=разомкнут, None=неизвестно
+    #: (вход не прочитан).  Раскладка по осям — через config.AXIS_SAFETY.
     limit_inputs: Dict[int, Optional[bool]] = field(default_factory=dict)
-    #: Признак заблокированного состояния (катушка M100): True=заблокировано,
-    #: False=норма, None=неизвестно (коил не прочитан).
-    blocked: Optional[bool] = None
+    #: Признак заблокированного состояния по осям (катушки M100/M200/M300):
+    #: ключ = номер оси -> True=заблокировано, False=норма, None=неизвестно.
+    blocked: Dict[int, Optional[bool]] = field(default_factory=dict)
 
 
 class StepType(str, Enum):

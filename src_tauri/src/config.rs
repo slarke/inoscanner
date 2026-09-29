@@ -87,8 +87,31 @@ pub const M_Y1_TOGGLE: u16 = 52;      // M52 - Статическое включ
 pub const M_Y2_FREQ_EN: u16 = 53;     // M53 - Разрешение генератора частоты (Выход Y2)
 pub const D_Y2_FREQ_VAL: u16 = 90;    // D90 - Заданное значение частоты (REAL)
 
-// --- ОТЛАДКА И МОНИТОРИНГ ВХОДОВ Easy521 ---
-pub const M_INPUT_X0: u16 = 100;      // M100 - X0 (Home X)
-pub const M_INPUT_X1: u16 = 101;      // M101 - X1 (Home Y)
-pub const M_INPUT_X2: u16 = 102;      // M102 - X2 (VNA Ready)
-pub const M_INPUT_X3: u16 = 103;      // M103 - X3 (E-Stop)
+// --- АППАРАТНАЯ БЛОКИРОВКА ПО КОНЦЕВЫМ ВЫКЛЮЧАТЕЛЯМ (ПО ОСЯМ) ---
+// Раздельная блокировка на каждую ось: два концевика (левый/правый) читаются
+// как Modbus discrete inputs (FC02), срабатывание защёлкивает катушку
+// block_latch (`Xn -> SET Mxxx`), импульс на block_reset снимает защёлку
+// (`Mxxx -> RST`). Карта взята из task.txt и совпадает с config.AXIS_SAFETY
+// Python-панели. Раньше здесь был мониторинг M100..M103 как простых коилов —
+// он удалён, так как M100 теперь занят логикой блокировки оси X.
+//   X: концевики X1/X2, блокировка M100, сброс M101
+//   Y: концевики X3/X4, блокировка M200, сброс M201
+//   Z: концевики X5/X6, блокировка M300, сброс M301
+pub const AXIS1_LIMIT_LEFT: u16 = 1;    // X1 (левый концевик оси X)
+pub const AXIS1_LIMIT_RIGHT: u16 = 2;   // X2 (правый концевик оси X)
+pub const AXIS1_BLOCK_LATCH: u16 = 100; // M100 - блокировка X (чтение)
+pub const AXIS1_BLOCK_RESET: u16 = 101; // M101 - снятие блокировки X (импульс)
+
+pub const AXIS2_LIMIT_LEFT: u16 = 3;    // X3 (левый концевик оси Y)
+pub const AXIS2_LIMIT_RIGHT: u16 = 4;   // X4 (правый концевик оси Y)
+pub const AXIS2_BLOCK_LATCH: u16 = 200; // M200 - блокировка Y (чтение)
+pub const AXIS2_BLOCK_RESET: u16 = 201; // M201 - снятие блокировки Y (импульс)
+
+pub const AXIS3_LIMIT_LEFT: u16 = 5;    // X5 (левый концевик оси Z)
+pub const AXIS3_LIMIT_RIGHT: u16 = 6;   // X6 (правый концевик оси Z)
+pub const AXIS3_BLOCK_LATCH: u16 = 300; // M300 - блокировка Z (чтение)
+pub const AXIS3_BLOCK_RESET: u16 = 301; // M301 - снятие блокировки Z (импульс)
+
+// Сплошное окно чтения всех концевиков X1..X6 одним запросом discrete inputs.
+pub const LIMIT_INPUT_BASE: u16 = 1;    // первый адрес (X1)
+pub const LIMIT_INPUT_COUNT: u16 = 6;   // X1..X6

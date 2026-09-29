@@ -313,3 +313,13 @@ canvas {
 .card-trajectory.compact .queue-row label { font-size: 10px !important; }
 .card-trajectory.compact .queue-row input.val-input { width: 34px !important; padding: 1px !important; font-size: 11px !important; }
 .card-trajectory.compact .queue-row .btn-delete-inline { padding: 2px 4px !important; font-size: 10px !important; }
+
+/* --- Индикаторы состояния: двигатели, концевики, блокировка --- */
+.dot {
+  display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+  background-color: #ccc; margin-right: 6px; transition: all 0.2s; flex: 0 0 auto;
+}
+.state-lbl { font-weight: bold; font-size: 13px; color: #999; }
+.safety-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.safety-row .axis-name { font-weight: bold; width: 54px; }
+.safety-cell { display: flex; align-items: center; }
