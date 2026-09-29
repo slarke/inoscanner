@@ -18,6 +18,7 @@
 | [`python_panel/SERVO_CORE_INTEGRATION.md`](python_panel/SERVO_CORE_INTEGRATION.md) | Как ядро встроено в панель: варианты A и B |
 | [`python_panel/HANDSHAKE_PROTOCOL.md`](python_panel/HANDSHAKE_PROTOCOL.md) | Спецификация handshake-протокола для ладдера (вариант B) |
 | [`python_panel/PLC_LADDER_REQUIREMENTS.md`](python_panel/PLC_LADDER_REQUIREMENTS.md) | Что добавить в `MAIN.LD`: оси Y/Z, выходы, концевики, E-stop |
+| [`python_panel/REST_API.md`](python_panel/REST_API.md) | HTTP REST + WebSocket API управления ПЛК (`plc_api`) |
 
 ---
 
@@ -110,6 +111,12 @@ innovance/
 │   ├── main.spec                 сборка PyInstaller (автосгенерированная, устаревшая)
 │   ├── scan_sequence*.json       примеры сценариев сканирования
 │   ├── *.md                      интеграция, handshake, требования к ладдеру
+│   ├── plc_api/                  REST + WebSocket API без Qt (см. REST_API.md)
+│   │   ├── ladder.py             что реализует текущий MAIN.LD
+│   │   ├── transport.py          Modbus TCP
+│   │   ├── controller.py         поток plc-io: команды, опрос, события
+│   │   ├── server.py             aiohttp: REST, WebSocket, токен
+│   │   └── sim.py                эмулятор текущего ладдера
 │   └── plc_panel/
 │       ├── __init__.py, __main__.py
 │       ├── paths.py              каталог пользовательских файлов
@@ -1094,6 +1101,14 @@ pyinstaller InovanceScanner.spec
 ---
 
 ## 13. Как расширять
+
+### REST/WebSocket API
+Пакет `python_panel/plc_api` — отдельный от GUI сервис управления ПЛК на
+текущей карте регистров (`python -m plc_api [--simulate]`). Команды — REST,
+телеметрия и события — WebSocket `/api/v1/ws`. Что именно реализует текущий
+`MAIN.LD` (импульс только на X, общий блок ошибок и т.п.), описано в
+`plc_api/ladder.py`; после доработки ладдера правится этот модуль. Полное
+описание — [`python_panel/REST_API.md`](python_panel/REST_API.md).
 
 ### Добавить/изменить адреса оси
 Правьте `AXES` / `AXIS_SAFETY` / `IO` в `plc_panel/config.py` **и**
