@@ -256,3 +256,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project build spec is versioned despite the template rule above
+!python_panel/InovanceScanner.spec
