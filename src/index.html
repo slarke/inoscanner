@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Inovance XYZ Antenna Scanner Panel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+  <div class="main-content">
+    <div class="status-bar" style="display:flex; gap:8px; align-items:center;">
+      <button id="btnConnect" class="btn-danger" style="padding: 6px 14px;" onclick="toggleConnect()">Связь: Отсутствует</button>
+      <button id="btnEnableAll" class="btn-success" style="padding: 6px 14px;" onclick="enableAllMotors()">Включить все двигатели</button>
+      <button id="btnEstop" class="btn-danger" style="padding: 6px 14px; background:#b00000; font-weight:bold;" onclick="emergencyStopAll()">⛔ АВАРИЙНЫЙ СТОП</button>
+    </div>
+
+    <div class="tabs">
+      <button id="tab1" class="tab active" onclick="switchTab(1)">Рабочая панель XYZ</button>
+      <button id="tab2" class="tab" onclick="switchTab(2)">Отладка двигателей</button>
+      <button id="tab3" class="tab" onclick="switchTab(3)">Настройки</button>
+      <button id="tab4" class="tab" onclick="switchTab(4)">Отладка входов-выходов easy521</button>
+    </div>
+
+    <div id="content1" class="tab-content active">
+      <div class="grid-3">
+        <div class="card">
+          <h3>Управление Осью X</h3>
+          <div class="safety-cell" style="margin-bottom:6px;">
+            <span id="pwr_led_1" class="dot"></span>
+            <span id="pwr_lbl_1" class="state-lbl">Двигатель: нет связи</span>
+          </div>
+          <div class="form-group">
+            <button class="btn-success" onclick="sendPower(1, true)">X ON</button>
+            <button class="btn-danger" onclick="sendPower(1, false)">X OFF</button>
+          </div>
+          <div class="form-group" style="justify-content: flex-start; gap: 15px; margin-bottom: 10px;">
+            <label>Цель X (мм): <input id="main_x_pos" type="number" step="0.01" value="100.0" style="width: 70px;"></label>
+            <label>Скорость: <input id="main_x_spd" type="number" step="0.1" value="10.0" style="width: 60px;"></label>
+          </div>
+          <button class="btn-primary" onclick="moveAbsMain(1)">MOVE X</button>
+        </div>
+
+        <div class="card">
+          <h3>Управление Осью Y</h3>
+          <div class="safety-cell" style="margin-bottom:6px;">
+            <span id="pwr_led_2" class="dot"></span>
+            <span id="pwr_lbl_2" class="state-lbl">Двигатель: нет связи</span>
+          </div>
+          <div class="form-group">
+            <button class="btn-success" onclick="sendPower(2, true)">Y ON</button>
+            <button class="btn-danger" onclick="sendPower(2, false)">Y OFF</button>
+          </div>
+          <div class="form-group" style="justify-content: flex-start; gap: 15px; margin-bottom: 10px;">
+            <label>Цель Y (мм): <input id="main_y_pos" type="number" step="0.01" value="100.0" style="width: 70px;"></label>
+            <label>Скорость: <input id="main_y_spd" type="number" step="0.1" value="10.0" style="width: 60px;"></label>
+          </div>
+          <button class="btn-primary" onclick="moveAbsMain(2)">MOVE Y</button>
+        </div>
+
+        <div class="card" style="border-top: 3px solid #7a24db;">
+          <h3>Управление Осью Z (Приближение)</h3>
+          <div class="safety-cell" style="margin-bottom:6px;">
+            <span id="pwr_led_3" class="dot"></span>
+            <span id="pwr_lbl_3" class="state-lbl">Двигатель: нет связи</span>
+          </div>
+          <div class="form-group">
+            <button class="btn-success" onclick="sendPower(3, true)">Z ON</button>
+            <button class="btn-danger" onclick="sendPower(3, false)">Z OFF</button>
+          </div>
+          <div class="form-group" style="justify-content: flex-start; gap: 15px; margin-bottom: 10px;">
+            <label>Цель Z (мм): <input id="main_z_pos" type="number" step="0.01" value="20.0" style="width: 70px;"></label>
+            <label>Скорость: <input id="main_z_spd" type="number" step="0.1" value="5.0" style="width: 60px;"></label>
+          </div>
+          <button class="btn-primary" style="background: #7a24db;" onclick="moveAbsMain(3)">MOVE Z</button>
+        </div>
+      </div>
+
+      <div class="flex-row-dynamic">
+        <div class="card card-trajectory">
+          <h3>Автоматический Сценарий Сканирования</h3>
+          
+          <div class="form-group" style="justify-content: flex-start; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; background: rgba(255,255,255,0.35); padding: 8px; border-radius: 11px; border: 1px solid rgba(255,255,255,0.5);">
+            <label><b>Действие:</b> 
+              <select id="stepTypeSelect" onchange="toggleStepInputs()">
+                <option value="move">1) Движение в точку</option>
+                <option value="move_pulse">2) Движение в точку с выдачей импульса</option>
+                <option value="delay">3) Задержка (мс)</option>
+                <option value="scpi">4) SCPI Команда</option>
+                <option value="pulse">5) Отправка импульса</option>
+              </select>
+            </label>
+
+            <span id="input_group_move">
+              Привод:
+              <select id="q_axis_select" style="width: 70px; padding: 2px;">
+                <option value="1">Ось X</option>
+                <option value="2">Ось Y</option>
+                <option value="3">Ось Z</option>
+              </select>
+              Координата: <input id="q_coord" type="number" step="0.1" value="50.0" style="width:55px;">
+              V скорость: <input id="q_speed" type="number" step="0.1" value="10.0" style="width:50px;">
+            </span>
+
+            <span id="input_group_delay" style="display:none;">
+              Пауза: <input id="q_delay" type="number" value="1000" style="width:60px;"> мс
+            </span>
+            <span id="input_group_scpi" style="display:none;">
+              Cmd: <input id="q_scpi" type="text" value=":INITiate:IMMediate" style="width:140px;">
+            </span>
+            <span id="input_group_pulse" style="display:none; color: #555; font-size: 11px;">
+              (Выход Y0 ПЛК)
+            </span>
+
+            <button class="btn-primary" style="padding: 3px 8px;" onclick="addPolymorphicStep()">Добавить</button>
+          </div>
+          
+          <div class="form-group" style="justify-content: flex-start; gap: 8px; margin-bottom: 8px;">
+            <button class="btn-primary" style="background: #7a24db;" onclick="importJsonSequence()">Импорт JSON</button>
+            <button class="btn-success" onclick="exportJsonSequence()">Экспорт JSON</button>
+            <button class="btn-danger" style="background: #cc2900;" onclick="clearSelectedPoints()">Очистить все</button>
+          </div>
+
+          <div class="trajectory-controls-wrapper" style="display: flex; gap: 8px;">
+            <div id="queueContainer" class="queue-container" style="flex: 1;"></div>
+            <div class="trajectory-action-btns" style="display:flex; flex-direction:column; gap:6px;">
+              <button class="btn-success" style="width:85px;" onclick="startQueue()">ЗАПУСК</button>
+              <button id="btnPauseQueue" class="btn-warn" style="width:85px;" onclick="togglePause()">ПАУЗА</button>
+              <button class="btn-danger" style="width:85px;" onclick="stopQueue()">СТОП</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-monitoring">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <h3 style="margin: 0;">Мониторинг плоскости XY</h3>
+            <button id="btnExpandMonitor" class="btn-primary" style="padding: 3px 10px; font-size: 11px;" onclick="toggleMonitorExpansion()">Развернуть</button>
+          </div>
+          <canvas id="xyPlotCanvas" height="280"></canvas> 
+          <div id="mainRealStats" class="stats-lbl">X: 0.00 | Y: 0.00 | Z: 0.00</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="content2" class="tab-content">
+      <div class="card" style="border-top: 3px solid #d83b01; margin-bottom: 12px;">
+        <h3>Концевые выключатели и аппаратная блокировка</h3>
+        <p style="font-size: 12px; color: #666; margin-bottom: 12px;">Срабатывание концевика останавливает ось и защёлкивает блокировку (M100/M200/M300). Снятие — кнопкой «Сброс блокировки» (импульс M101/M201/M301).</p>
+
+        <div class="safety-row" style="margin-bottom:10px;">
+          <span class="axis-name">Ось X</span>
+          <span class="safety-cell"><span id="lim_1" class="dot"></span><span id="limlbl_1" class="state-lbl">[X1] нет связи</span></span>
+          <span class="safety-cell" style="margin-left:14px;"><span id="lim_2" class="dot"></span><span id="limlbl_2" class="state-lbl">[X2] нет связи</span></span>
+          <span style="flex:1;"></span>
+          <span class="safety-cell"><span id="block_led_1" class="dot"></span><span id="block_lbl_1" class="state-lbl">Блокировка: Нет связи</span></span>
+          <button class="btn-warn" style="padding:4px 12px; margin-left:10px;" onclick="sendBlockReset(1)">Сброс блокировки</button>
+        </div>
+
+        <div class="safety-row" style="margin-bottom:10px;">
+          <span class="axis-name">Ось Y</span>
+          <span class="safety-cell"><span id="lim_3" class="dot"></span><span id="limlbl_3" class="state-lbl">[X3] нет связи</span></span>
+          <span class="safety-cell" style="margin-left:14px;"><span id="lim_4" class="dot"></span><span id="limlbl_4" class="state-lbl">[X4] нет связи</span></span>
+          <span style="flex:1;"></span>
+          <span class="safety-cell"><span id="block_led_2" class="dot"></span><span id="block_lbl_2" class="state-lbl">Блокировка: Нет связи</span></span>
+          <button class="btn-warn" style="padding:4px 12px; margin-left:10px;" onclick="sendBlockReset(2)">Сброс блокировки</button>
+        </div>
+
+        <div class="safety-row">
+          <span class="axis-name">Ось Z</span>
+          <span class="safety-cell"><span id="lim_5" class="dot"></span><span id="limlbl_5" class="state-lbl">[X5] нет связи</span></span>
+          <span class="safety-cell" style="margin-left:14px;"><span id="lim_6" class="dot"></span><span id="limlbl_6" class="state-lbl">[X6] нет связи</span></span>
+          <span style="flex:1;"></span>
+          <span class="safety-cell"><span id="block_led_3" class="dot"></span><span id="block_lbl_3" class="state-lbl">Блокировка: Нет связи</span></span>
+          <button class="btn-warn" style="padding:4px 12px; margin-left:10px;" onclick="sendBlockReset(3)">Сброс блокировки</button>
+        </div>
+      </div>
+
+      <div class="grid-3">
+
+        <div class="card" style="border-top: 3px solid #0078d4;">
+          <h3>Тесты: Ось X</h3>
+          <div id="xRealStats" class="stats-lbl">Реальные: 0.00 мм</div>
+          <div id="xRawPos" class="raw-data">D210: [0, 0]</div>
+          <div id="xErrors" class="raw-data" style="color: #666; font-weight: bold; margin-bottom: 4px;">Ошибки: Нет</div>
+          <button class="btn-primary" style="padding: 2px 6px; font-size: 11px; margin-bottom: 6px; background:#4a4a4a;" onclick="readAxisErrorDebug(1)">🔄 Читать MC_ReadAxisError</button>
+          <canvas id="xLinearCanvas" width="380" height="40"></canvas>
+          <div class="form-group" style="margin-top:6px;">
+            <button class="btn-success" onclick="sendPower(1, true)">ON</button>
+            <button class="btn-danger" onclick="sendPower(1, false)">OFF</button>
+            <button class="btn-warn" onclick="sendReset(1)">Сброс</button>
+          </div>
+          
+          <h4>Позиционирование (MC_MoveAbsolute)</h4>
+          <div class="form-group"><label>Коорд (мм):</label><input id="dbg_x_abs_pos" type="number" value="50.0"></div>
+          <div class="form-group"><label>Скорость:</label><input id="dbg_x_abs_spd" type="number" value="5.0"></div>
+          <button class="btn-primary" style="width:100%; margin-bottom:8px;" onclick="moveAbsDbg(1)">MOVE X</button>
+          
+          <h4>Смещение координат (MC_SetPosition)</h4>
+          <div class="form-group"><label>Новая поз:</label><input id="dbg_x_set_val" type="number" value="0.0"></div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-warn" style="flex:1;" onclick="setPosDbg(1)">Применить (D16)</button>
+            <button class="btn-danger" style="flex:1; background:#8e24aa;" onclick="resetPosDbg(1)">Сброс в 0.00</button>
+          </div>
+
+          <h4>Режим скорости (MC_MoveVelocity)</h4>
+          <div class="form-group"><label>V скорость:</label><input id="dbg_x_vel_spd" type="number" value="10.0"></div>
+          <div class="form-group"><label>Разгон / Зам:</label>
+            <input id="dbg_x_vel_acc" type="number" value="20.0" style="width:45px;">
+            <input id="dbg_x_vel_dec" type="number" value="20.0" style="width:45px;">
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-success" style="flex:1; background:#0078d4;" onclick="moveVelDbg(1)">КРУИЗ X</button>
+            <button class="btn-danger" style="flex:1;" onclick="stopVelDbg(1)">STOP X</button>
+          </div>
+        </div>
+
+        <div class="card" style="border-top: 3px solid #107c41;">
+          <h3>Тесты: Ось Y</h3>
+          <div id="yRealStats" class="stats-lbl" style="color:#107c41;">Реальные: 0.00 мм</div>
+          <div id="yRawPos" class="raw-data">D220: [0, 0]</div>
+          <div id="yErrors" class="raw-data" style="color: #666; font-weight: bold; margin-bottom: 4px;">Ошибки: Нет</div>
+          <button class="btn-primary" style="padding: 2px 6px; font-size: 11px; margin-bottom: 6px; background:#4a4a4a;" onclick="readAxisErrorDebug(2)">🔄 Читать MC_ReadAxisError</button>
+          <canvas id="yLinearCanvas" width="380" height="40"></canvas>
+          <div class="form-group" style="margin-top:6px;">
+            <button class="btn-success" onclick="sendPower(2, true)">ON</button>
+            <button class="btn-danger" onclick="sendPower(2, false)">OFF</button>
+            <button class="btn-warn" onclick="sendReset(2)">Сброс</button>
+          </div>
+          
+          <h4>Позиционирование (MC_MoveAbsolute)</h4>
+          <div class="form-group"><label>Коорд (мм):</label><input id="dbg_y_abs_pos" type="number" value="50.0"></div>
+          <div class="form-group"><label>Скорость:</label><input id="dbg_y_abs_spd" type="number" value="5.0"></div>
+          <button class="btn-primary" style="width:100%; background:#107c41; margin-bottom:8px;" onclick="moveAbsDbg(2)">MOVE Y</button>
+          
+          <h4>Смещение координат (MC_SetPosition)</h4>
+          <div class="form-group"><label>Новая поз:</label><input id="dbg_y_set_val" type="number" value="0.0"></div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-warn" style="flex:1;" onclick="setPosDbg(2)">Применить (D46)</button>
+            <button class="btn-danger" style="flex:1; background:#8e24aa;" onclick="resetPosDbg(2)">Сброс в 0.00</button>
+          </div>
+
+          <h4>Режим скорости (MC_MoveVelocity)</h4>
+          <div class="form-group"><label>V скорость:</label><input id="dbg_y_vel_spd" type="number" value="10.0"></div>
+          <div class="form-group"><label>Разгон / Зам:</label>
+            <input id="dbg_y_vel_acc" type="number" value="20.0" style="width:45px;">
+            <input id="dbg_y_vel_dec" type="number" value="20.0" style="width:45px;">
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-success" style="flex:1; background:#107c41;" onclick="moveVelDbg(2)">КРУИЗ Y</button>
+            <button class="btn-danger" style="flex:1;" onclick="stopVelDbg(2)">STOP Y</button>
+          </div>
+        </div>
+
+        <div class="card" style="border-top: 3px solid #7a24db;">
+          <h3>Тесты: Ось Z</h3>
+          <div id="zRealStats" class="stats-lbl" style="color:#7a24db;">Реальные: 0.00 мм</div>
+          <div id="zRawPos" class="raw-data">D240: [0, 0]</div>
+          <div id="zErrors" class="raw-data" style="color: #666; font-weight: bold; margin-bottom: 4px;">Ошибки: Нет</div>
+          <button class="btn-primary" style="padding: 2px 6px; font-size: 11px; margin-bottom: 6px; background:#4a4a4a;" onclick="readAxisErrorDebug(3)">🔄 Читать MC_ReadAxisError</button>
+          <canvas id="zLinearCanvas" width="380" height="40"></canvas>
+          <div class="form-group" style="margin-top:6px;">
+            <button class="btn-success" onclick="sendPower(3, true)">ON</button>
+            <button class="btn-danger" onclick="sendPower(3, false)">OFF</button>
+            <button class="btn-warn" onclick="sendReset(3)">Сброс</button>
+          </div>
+          
+          <h4>Позиционирование (MC_MoveAbsolute)</h4>
+          <div class="form-group"><label>Коорд (мм):</label><input id="dbg_z_abs_pos" type="number" value="10.0"></div>
+          <div class="form-group"><label>Скорость:</label><input id="dbg_z_abs_spd" type="number" value="4.0"></div>
+          <button class="btn-primary" style="width:100%; background:#7a24db; margin-bottom:8px;" onclick="moveAbsDbg(3)">MOVE Z</button>
+          
+          <h4>Смещение координат (MC_SetPosition)</h4>
+          <div class="form-group"><label>Новая поз:</label><input id="dbg_z_set_val" type="number" value="0.0"></div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-warn" style="flex:1;" onclick="setPosDbg(3)">Применить (D66)</button>
+            <button class="btn-danger" style="flex:1; background:#8e24aa;" onclick="resetPosDbg(3)">Сброс в 0.00</button>
+          </div>
+
+          <h4>Режим скорости (MC_MoveVelocity)</h4>
+          <div class="form-group"><label>V скорость:</label><input id="dbg_z_vel_spd" type="number" value="5.0"></div>
+          <div class="form-group"><label>Разгон / Зам:</label>
+            <input id="dbg_z_vel_acc" type="number" value="10.0" style="width:45px;">
+            <input id="dbg_z_vel_dec" type="number" value="10.0" style="width:45px;">
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-success" style="flex:1; background:#7a24db;" onclick="moveVelDbg(3)">КРУИЗ Z</button>
+            <button class="btn-danger" style="flex:1;" onclick="stopVelDbg(3)">STOP Z</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div id="content3" class="tab-content">
+      <div class="grid-3"> <div class="card">
+          <h3>Параметры связи ПЛК</h3>
+          <div class="form-group"><label>IP Адрес:</label><input id="cfg_plc_ip" type="text" value="192.168.1.88"></div>
+          <div class="form-group"><label>Порт Modbus:</label><input id="cfg_plc_port" type="number" value="502"></div>
+          <div class="form-group"><label>Период опроса (мс):</label><input id="cfg_poll_ms" type="number" value="150"></div>
+          <div class="form-group" style="justify-content:flex-start; gap:6px;">
+            <label style="display:flex; align-items:center; gap:6px;"><input id="cfg_auto_connect" type="checkbox"> Автоподключение при запуске</label>
+          </div>
+          <div class="form-group" style="justify-content:flex-start; gap:12px;">
+            <label style="font-weight:600;">Подключённые оси:</label>
+            <label style="display:flex; align-items:center; gap:4px;"><input id="cfg_axis_x" type="checkbox" checked> X</label>
+            <label style="display:flex; align-items:center; gap:4px;"><input id="cfg_axis_y" type="checkbox" checked> Y</label>
+            <label style="display:flex; align-items:center; gap:4px;"><input id="cfg_axis_z" type="checkbox" checked> Z</label>
+          </div>
+          <p style="font-size:11px; color:#888; margin:4px 0 8px;">Движения сценария по неподключённым осям пропускаются (защита от зависания).</p>
+          <button class="btn-primary" style="width:100%;" onclick="saveAppConfig()">💾 Сохранить настройки</button>
+        </div>
+        <div class="card">
+          <h3>Параметры Анализатора (SCPI)</h3>
+          <div class="form-group"><label>IP Адрес:</label><input id="cfg_scpi_ip" type="text" value="192.168.1.99"></div>
+          <div class="form-group"><label>Порт прибора:</label><input id="cfg_scpi_port" type="number" value="5025"></div>
+        </div>
+        <div class="card" style="border-top: 3px solid #7a24db;">
+          <h3>Конфигурация сетки XYZ шкал</h3>
+          <div class="form-group"><label>Мин. X (мм):</label><input id="cfg_x_min" type="number" value="-50.0"></div>
+          <div class="form-group"><label>Макс. X (мм):</label><input id="cfg_x_max" type="number" value="500.0"></div>
+          <div class="form-group"><label>Мин. Y (мм):</label><input id="cfg_y_min" type="number" value="-50.0"></div>
+          <div class="form-group"><label>Макс. Y (мм):</label><input id="cfg_y_max" type="number" value="500.0"></div>
+          <div class="form-group"><label>Мин. Z (мм):</label><input id="cfg_z_min" type="number" value="-10.0"></div>
+          <div class="form-group"><label>Макс. Z (мм):</label><input id="cfg_z_max" type="number" value="200.0"></div>
+          <button class="btn-primary" style="width:100%; background:#7a24db;" onclick="applyGridSettings()">Применить сетку XYZ</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="content4" class="tab-content">
+      <div class="grid-2">
+        <div class="card" style="border-top: 3px solid #d83b01;">
+          <h3>Управление дискретными выходами (Easy521)</h3>
+          <p style="font-size: 12px; color: #666; margin-bottom: 15px;">Ручная симуляция и активация силовых триггеров исполнительных механизмов.</p>
+          
+          <div style="display: flex; flex-direction: column; gap: 15px;">
+            <div style="background:rgba(255,255,255,0.35); padding:10px; border-radius:11px; border:1px solid rgba(255,255,255,0.5);">
+              <div style="display:flex; align-items:center; margin-bottom:6px;">
+                <span id="led_y0" style="display:inline-block; width:12px; height:12px; border-radius:50%; background-color:#ccc; margin-right:8px;"></span>
+                <span style="font-weight:bold; font-size:13px;">Выход Y0: Запуск замера (Командами)</span>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button class="btn-success" style="flex: 1; padding:4px;" onclick="setY0Toggle(true)">HIGH (Вкл)</button>
+                <button class="btn-danger" style="flex: 1; padding:4px;" onclick="setY0Toggle(false)">LOW (Выкл)</button>
+              </div>
+            </div>
+
+            <div style="background:rgba(255,255,255,0.35); padding:10px; border-radius:11px; border:1px solid rgba(255,255,255,0.5);">
+              <div style="display:flex; align-items:center; margin-bottom:6px;">
+                <span id="led_y1" style="display:inline-block; width:12px; height:12px; border-radius:50%; background-color:#ccc; margin-right:8px;"></span>
+                <span style="font-weight:bold; font-size:13px;">Выход Y1: Статический уровень / Затвор питания</span>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button class="btn-success" style="flex: 1; padding:4px;" onclick="setOutputToggle(true)">HIGH (Вкл)</button>
+                <button class="btn-danger" style="flex: 1; padding:4px;" onclick="setOutputToggle(false)">LOW (Выкл)</button>
+              </div>
+            </div>
+
+            <div style="background:rgba(255,255,255,0.35); padding:10px; border-radius:11px; border:1px solid rgba(255,255,255,0.5);">
+              <div style="display:flex; align-items:center; margin-bottom:6px;">
+                <span id="led_y2" style="display:inline-block; width:12px; height:12px; border-radius:50%; background-color:#ccc; margin-right:8px;"></span>
+                <span style="font-weight:bold; font-size:13px;">Выход Y2: Непрерывная генерация частоты</span>
+              </div>
+              <div class="form-group" style="justify-content: flex-start; gap: 10px; margin-bottom: 6px;">
+                <label style="font-size:12px;">Частота меандра (Гц): <input id="dbg_out_freq" type="number" value="1000" style="width: 100px; padding:2px; font-size:12px;"></label>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button class="btn-primary" style="background: #7a24db; flex: 1; padding:4px;" onclick="setFreqConfig(true)">Старт</button>
+                <button class="btn-danger" style="flex: 1; padding:4px;" onclick="setFreqConfig(false)">Стоп</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="log-panel">
+    <h3>Системный журнал ПЛК</h3>
+    <div id="logOutput" class="log-output">Панель управления инициализирована.</div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

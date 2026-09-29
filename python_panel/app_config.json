@@ -1,0 +1,24 @@
+{
+  "plc_ip": "192.168.4.88",
+  "plc_port": 502,
+  "poll_interval_ms": 200,
+  "scpi_ip": "192.168.1.99",
+  "scpi_port": 5025,
+  "auto_connect": true,
+  "active_axes": [
+    1,
+    2,
+    3
+  ],
+  "arrival_tolerance_mm": 0.4,
+  "move_timeout_ms": 3000,
+  "max_move_attempts": 3,
+  "limits": {
+    "x_min": -50.0,
+    "x_max": 3000.0,
+    "y_min": -50.0,
+    "y_max": 500.0,
+    "z_min": -10.0,
+    "z_max": 200.0
+  }
+}

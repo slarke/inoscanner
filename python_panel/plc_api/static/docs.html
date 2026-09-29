@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PLC API</title>
+  <link rel="icon" type="image/png" href="/docs/static/swagger-ui/favicon-32x32.png">
+  <link rel="stylesheet" href="/docs/static/swagger-ui/swagger-ui.css">
+  <link rel="stylesheet" href="/docs/static/docs.css">
+</head>
+<body>
+  <header class="top">
+    <span class="brand">PLC API <span class="muted">Inovance XYZ Scanner</span></span>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="control" aria-selected="true">Пульт</button>
+      <button role="tab" data-tab="rest" aria-selected="false">REST (Swagger)</button>
+      <button role="tab" data-tab="ws" aria-selected="false">WebSocket</button>
+    </nav>
+    <label class="token">Токен
+      <input id="api-token" type="password" autocomplete="off"
+             placeholder="если сервер с --token">
+    </label>
+    <span id="link-state" class="pill" title="Связь сервера с ПЛК (/api/v1/health)">…</span>
+  </header>
+
+  <section id="tab-control" role="tabpanel">
+    <div class="panel master">
+      <button id="stop-all" class="stop-all" title="Esc">СТОП ВСЕ ОСИ <kbd>Esc</kbd></button>
+      <label class="inline"><input id="stop-all-power" type="checkbox"> и снять питание</label>
+      <span class="sep"></span>
+      <span class="group-label">Питание всех:</span>
+      <button data-all="power-on">Вкл</button>
+      <button data-all="power-off">Выкл</button>
+      <span class="sep"></span>
+      <span class="group-label">Y0:</span>
+      <button data-y0="pulse">Импульс</button>
+      <button data-y0="high">HIGH</button>
+      <button data-y0="low">LOW</button>
+      <span id="ctl-live" class="pill off">телеметрия: нет</span>
+    </div>
+    <p id="ctl-message" class="warn" hidden></p>
+    <div id="axis-cards" class="cards"></div>
+    <div class="panel">
+      <h3>Журнал команд <button id="ctl-log-clear" class="small-btn">Очистить</button></h3>
+      <ol id="ctl-log" class="log short"></ol>
+    </div>
+  </section>
+
+  <section id="tab-rest" role="tabpanel" hidden>
+    <p class="warn">
+      Кнопка <b>Execute</b> отправляет <b>реальные</b> команды на ПЛК. Ответ 202
+      означает «регистры записаны», а не «движение выполнено».
+    </p>
+    <div id="swagger-ui"></div>
+  </section>
+
+  <section id="tab-ws" role="tabpanel" hidden>
+    <div class="panel controls">
+      <fieldset id="ws-events">
+        <legend>События</legend>
+        <label><input type="checkbox" value="telemetry" checked> telemetry</label>
+        <label><input type="checkbox" value="connection" checked> connection</label>
+        <label><input type="checkbox" value="command" checked> command</label>
+        <label><input type="checkbox" value="arrived" checked> arrived</label>
+        <label><input type="checkbox" value="blocked" checked> blocked</label>
+      </fieldset>
+      <label>Телеметрия не чаще, мс
+        <input id="ws-interval" type="number" min="0" step="50" value="200">
+      </label>
+      <div class="buttons">
+        <button id="ws-connect" class="primary">Подключить</button>
+        <button id="ws-ping" disabled>Ping</button>
+        <span id="ws-state" class="pill off">отключено</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <h3>Оси <span id="tel-meta" class="muted"></span></h3>
+        <table class="axes">
+          <thead>
+            <tr><th>Ось</th><th>Позиция, мм</th><th>Скорость</th><th>Питание*</th>
+                <th>Блокировка</th><th>Концевики Л / П</th></tr>
+          </thead>
+          <tbody id="axes-body"></tbody>
+        </table>
+        <p class="muted small">
+          * <i>power_command</i> — команда M10/M20/M30, а не фактический статус привода.
+          Ошибки — общий блок D220/D222 для всех осей.
+        </p>
+        <p id="tel-errors" class="small"></p>
+      </div>
+
+      <div class="panel log-panel">
+        <h3>События
+          <label class="small"><input id="log-telemetry" type="checkbox"> показывать telemetry</label>
+          <label class="small"><input id="log-pause" type="checkbox"> пауза</label>
+          <button id="log-clear" class="small-btn">Очистить</button>
+        </h3>
+        <ol id="log" class="log"></ol>
+      </div>
+    </div>
+  </section>
+
+  <script src="/docs/static/swagger-ui/swagger-ui-bundle.js"></script>
+  <script src="/docs/static/docs.js"></script>
+  <script src="/docs/static/control.js"></script>
+</body>
+</html>
